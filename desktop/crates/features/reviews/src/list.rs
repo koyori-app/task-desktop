@@ -1,19 +1,140 @@
-//! §16 PR 一覧。blocking > 0 は危険色、unresolved/rounds を出す。
-
+//! Project PR list and local review drafts, submitted atomically as one round.
 use api::Client;
-use api::types::{CreateReviewRequest, CreateReviewRequestHeadSha, ReviewedPullRequest};
+use api::types::{
+    CreateFindingInput, CreateReviewRequest, CreateReviewRequestHeadSha, FindingSeverity,
+    ReviewedPullRequest,
+};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::Theme;
+use gpui_kit::component::IndexPath;
+use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
+use gpui_kit::component::list::{List, ListDelegate, ListEvent, ListItem, ListState};
+use gpui_kit::component::notification::Notification;
+use gpui_kit::component::{Disableable, Selectable, Theme, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub enum ReviewListEvent {
-    /// PR 行クリック → Detail で summary/findings を開く。
     Select { pr: i64, title: Option<String> },
+}
+
+fn review_request(
+    pr: &str,
+    sha: &str,
+    summary: &str,
+    findings: Vec<CreateFindingInput>,
+) -> Result<CreateReviewRequest, String> {
+    let pr_number = pr
+        .trim()
+        .parse::<i32>()
+        .ok()
+        .filter(|n| *n > 0)
+        .ok_or_else(|| "PR number must be a positive integer.".to_string())?;
+    let sha = sha.trim();
+    let head_sha = CreateReviewRequestHeadSha::try_from(sha).map_err(|_| format!(
+        "Head SHA must contain exactly 40 lowercase hexadecimal characters ({} characters entered).", sha.chars().count()))?;
+    let summary = summary.trim();
+    Ok(CreateReviewRequest {
+        findings,
+        head_sha,
+        pr_number,
+        summary: if summary.is_empty() {
+            None
+        } else {
+            Some(summary.to_string())
+        },
+    })
+}
+
+struct PullRequestRows {
+    rows: Vec<ReviewedPullRequest>,
+    loading: bool,
+}
+impl ListDelegate for PullRequestRows {
+    type Item = ListItem;
+    fn items_count(&self, _: usize, _: &App) -> usize {
+        self.rows.len()
+    }
+    fn set_selected_index(
+        &mut self,
+        _: Option<IndexPath>,
+        _: &mut Window,
+        _: &mut Context<ListState<Self>>,
+    ) {
+    }
+    fn loading(&self, _: &App) -> bool {
+        self.loading && self.rows.is_empty()
+    }
+    fn render_empty(
+        &mut self,
+        _: &mut Window,
+        cx: &mut Context<ListState<Self>>,
+    ) -> impl IntoElement {
+        div()
+            .p_4()
+            .text_sm()
+            .text_color(Theme::global(cx).semantic_tokens().colors.muted_foreground)
+            .child("No reviewed pull requests")
+    }
+    fn render_item(
+        &mut self,
+        ix: IndexPath,
+        _: &mut Window,
+        cx: &mut Context<ListState<Self>>,
+    ) -> Option<ListItem> {
+        let pr = self.rows.get(ix.row)?;
+        let t = Theme::global(cx);
+        let c = t.semantic_tokens().colors;
+        Some(
+            ListItem::new(("pr-row", ix.row)).h(px(90.)).w_full().child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_ellipsis()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(format!(
+                                "#{} · {}",
+                                pr.pr_number,
+                                pr.pr_title.as_deref().unwrap_or("Untitled pull request")
+                            )),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(c.muted_foreground)
+                            .text_ellipsis()
+                            .child(format!(
+                                "{} · {} rounds · {}",
+                                pr.pr_author.as_deref().unwrap_or("Unknown author"),
+                                pr.rounds,
+                                pr.last_reviewed_at.format("%Y-%m-%d %H:%M")
+                            )),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(if pr.blocking > 0 {
+                                t.danger
+                            } else {
+                                c.muted_foreground
+                            })
+                            .child(format!(
+                                "{} unresolved · {} blocking",
+                                pr.unresolved, pr.blocking
+                            )),
+                    ),
+            ),
+        )
+    }
 }
 
 pub struct ReviewListView {
@@ -23,12 +144,28 @@ pub struct ReviewListView {
     prs: Vec<ReviewedPullRequest>,
     loading: bool,
     error: Option<String>,
-    /// レビュー作成フォーム（§16 末尾: 手動トリガ）。
+    shown_error: Option<String>,
     pr_input: Entity<InputState>,
     sha_input: Entity<InputState>,
+    repo_input: Entity<InputState>,
+    host_input: Entity<InputState>,
+    summary_input: Entity<TextareaState>,
+    finding_title: Entity<InputState>,
+    finding_body: Entity<TextareaState>,
+    finding_file: Entity<InputState>,
+    finding_line: Entity<InputState>,
+    severity: FindingSeverity,
+    drafts: Vec<CreateFindingInput>,
     show_create: bool,
+    submitting: bool,
+    clear_draft: bool,
+    clear_form: bool,
+    list_state: Entity<ListState<PullRequestRows>>,
+    _subs: Vec<Subscription>,
+    selected: Option<usize>,
+    generation: u64,
+    context_generation: u64,
 }
-
 impl ReviewListView {
     pub fn new(
         client: Option<Client>,
@@ -36,34 +173,136 @@ impl ReviewListView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self {
+        let list_state = cx.new(|cx| {
+            ListState::new(
+                PullRequestRows {
+                    rows: vec![],
+                    loading: false,
+                },
+                window,
+                cx,
+            )
+        });
+        let _ = list_state.read(cx).focus_handle(cx).tab_stop(true);
+        let sub = cx.subscribe(&list_state, |this, _, event: &ListEvent, cx| {
+            if let ListEvent::Select(ix) | ListEvent::Confirm(ix) = event {
+                this.selected = Some(ix.row);
+                if let Some(pr) = this.prs.get(ix.row) {
+                    cx.emit(ReviewListEvent::Select {
+                        pr: pr.pr_number as i64,
+                        title: pr.pr_title.clone(),
+                    });
+                }
+                cx.notify();
+            }
+        });
+        let mut this = Self {
             client,
             tenant,
             project: None,
             prs: vec![],
             loading: false,
             error: None,
-            pr_input: cx.new(|cx| InputState::new(window, cx).placeholder("PR #")),
-            sha_input: cx.new(|cx| InputState::new(window, cx).placeholder("head SHA")),
+            shown_error: None,
+            pr_input: cx.new(|cx| InputState::new(window, cx).placeholder("PR number")),
+            sha_input: cx.new(|cx| {
+                InputState::new(window, cx).placeholder("40-character lowercase head SHA")
+            }),
+            repo_input: cx.new(|cx| {
+                InputState::new(window, cx).placeholder("Repository (owner/name, optional)")
+            }),
+            host_input: cx.new(|cx| {
+                InputState::new(window, cx).placeholder("Host (e.g. github.com, optional)")
+            }),
+            summary_input: cx
+                .new(|cx| TextareaState::new(window, cx).placeholder("Review summary (Markdown)")),
+            finding_title: cx.new(|cx| InputState::new(window, cx).placeholder("Finding title")),
+            finding_body: cx.new(|cx| {
+                TextareaState::new(window, cx).placeholder("Finding description (Markdown)")
+            }),
+            finding_file: cx
+                .new(|cx| InputState::new(window, cx).placeholder("File path (optional)")),
+            finding_line: cx.new(|cx| InputState::new(window, cx).placeholder("Line (optional)")),
+            severity: FindingSeverity::Medium,
+            drafts: vec![],
             show_create: false,
+            submitting: false,
+            clear_draft: false,
+            clear_form: false,
+            list_state,
+            _subs: vec![sub],
+            selected: None,
+            generation: 0,
+            context_generation: 0,
+        };
+        for input in [
+            &this.pr_input,
+            &this.sha_input,
+            &this.finding_title,
+            &this.finding_file,
+            &this.finding_line,
+            &this.repo_input,
+            &this.host_input,
+        ] {
+            this._subs
+                .push(cx.subscribe(input, |this, _, event: &InputEvent, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.error = None;
+                        this.shown_error = None;
+                        cx.notify();
+                    }
+                }));
         }
+        for input in [&this.summary_input, &this.finding_body] {
+            this._subs
+                .push(cx.subscribe(input, |this, _, event: &InputEvent, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.error = None;
+                        this.shown_error = None;
+                        cx.notify();
+                    }
+                }));
+        }
+        this
     }
-
     pub fn set_client(&mut self, client: Client, tenant: Option<Uuid>) {
+        if self.tenant != tenant {
+            self.clear_client();
+            self.project = None;
+            self.clear_form = true;
+            self.loading = false;
+            self.submitting = false;
+        }
         self.client = Some(client);
         self.tenant = tenant;
     }
-
-    /// ログアウト時に呼ぶ。
     pub fn clear_client(&mut self) {
+        self.context_generation += 1;
+        self.submitting = false;
         self.client = None;
+        self.generation += 1;
+        self.prs.clear();
+        self.drafts.clear();
+        self.show_create = false;
     }
-
     pub fn set_project(&mut self, project: Uuid, cx: &mut Context<Self>) {
+        if self.project != Some(project) {
+            self.context_generation += 1;
+            self.submitting = false;
+            self.prs.clear();
+            self.drafts.clear();
+            self.show_create = false;
+            self.clear_form = true;
+            self.selected = None;
+        }
         self.project = Some(project);
         self.reload(cx);
     }
-
+    pub fn start_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_create = true;
+        self.pr_input.update(cx, |s, cx| s.focus(window, cx));
+        cx.notify();
+    }
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         let (Some(client), Some(tenant), Some(project)) =
             (self.client.clone(), self.tenant, self.project)
@@ -72,12 +311,17 @@ impl ReviewListView {
         };
         self.loading = true;
         self.error = None;
+        self.generation += 1;
+        let generation = self.generation;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let res = client.list_reviewed_pull_requests(tenant, project).await;
+            let result = client.list_reviewed_pull_requests(tenant, project).await;
             let _ = this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
                 this.loading = false;
-                match res {
+                match result {
                     Ok(prs) => this.prs = prs,
                     Err(e) => this.error = Some(e.to_string()),
                 }
@@ -86,43 +330,115 @@ impl ReviewListView {
         })
         .detach();
     }
-
+    fn add_finding(&mut self, cx: &mut Context<Self>) {
+        self.shown_error = None;
+        let title = self.finding_title.read(cx).value().trim().to_string();
+        let body = self.finding_body.read(cx).value().trim().to_string();
+        if title.is_empty() || body.is_empty() {
+            self.error = Some("Enter a finding title and description.".into());
+            cx.notify();
+            return;
+        }
+        let line_text = self.finding_line.read(cx).value().trim().to_string();
+        let line = if line_text.is_empty() {
+            None
+        } else {
+            match line_text.parse::<i32>() {
+                Ok(n) if n > 0 => Some(n),
+                _ => {
+                    self.error = Some("Line must be a positive number.".into());
+                    cx.notify();
+                    return;
+                }
+            }
+        };
+        let file = self.finding_file.read(cx).value().trim().to_string();
+        self.drafts.push(CreateFindingInput {
+            title,
+            body,
+            severity: self.severity,
+            file: if file.is_empty() { None } else { Some(file) },
+            line,
+        });
+        self.clear_draft = true;
+        self.error = None;
+        cx.notify();
+    }
     fn create_review(&mut self, cx: &mut Context<Self>) {
+        if self.submitting {
+            return;
+        }
+        self.shown_error = None;
         let (Some(client), Some(tenant), Some(project)) =
             (self.client.clone(), self.tenant, self.project)
         else {
-            return;
-        };
-        let pr_text = self.pr_input.read(cx).value().trim().to_string();
-        let sha = self.sha_input.read(cx).value().trim().to_string();
-        let Ok(pr_number) = pr_text.parse::<i32>() else {
-            self.error = Some("PR number must be an integer".into());
+            self.error = Some("Select a project and sign in before submitting a review.".into());
             cx.notify();
             return;
         };
-        let Ok(head_sha) = CreateReviewRequestHeadSha::try_from(sha.clone()) else {
-            self.error = Some("Invalid head SHA".into());
+        let body = match review_request(
+            self.pr_input.read(cx).value().as_str(),
+            self.sha_input.read(cx).value().as_str(),
+            self.summary_input.read(cx).value().as_str(),
+            self.drafts.clone(),
+        ) {
+            Ok(body) => body,
+            Err(error) => {
+                self.error = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+        if !self.finding_title.read(cx).value().trim().is_empty()
+            || !self.finding_body.read(cx).value().trim().is_empty()
+        {
+            self.error = Some("Add the current finding to the draft before submitting.".into());
             cx.notify();
             return;
-        };
+        }
+        let repo = self.repo_input.read(cx).value().trim().to_string();
+        let host = self.host_input.read(cx).value().trim().to_string();
+        self.submitting = true;
+        let context_generation = self.context_generation;
+        self.error = None;
+        cx.notify();
         cx.spawn(async move |this, cx| {
-            let res = client
-                .create_review(
+            let result = client
+                .create_review_with_repository(
                     tenant,
                     project,
-                    &CreateReviewRequest {
-                        findings: vec![],
-                        head_sha,
-                        pr_number,
-                        summary: None,
+                    &body,
+                    if repo.is_empty() {
+                        None
+                    } else {
+                        Some(repo.as_str())
+                    },
+                    if host.is_empty() {
+                        None
+                    } else {
+                        Some(host.as_str())
                     },
                 )
                 .await;
             let _ = this.update(cx, |this, cx| {
-                match res {
-                    Ok(_) => {
+                if this.context_generation != context_generation
+                    || this.project != Some(project)
+                    || this.tenant != Some(tenant)
+                    || this.client.is_none()
+                {
+                    return;
+                }
+                this.submitting = false;
+                match result {
+                    Ok(review) => {
                         this.show_create = false;
+                        this.drafts.clear();
+                        this.clear_form = true;
                         this.reload(cx);
+                        cx.emit(ReviewListEvent::Select {
+                            pr: review.pr_number as i64,
+                            title: review.pr_title,
+                        });
                     }
                     Err(e) => this.error = Some(e.to_string()),
                 }
@@ -131,126 +447,204 @@ impl ReviewListView {
         })
         .detach();
     }
-
-    fn row(&self, pr: &ReviewedPullRequest, ix: usize, cx: &mut Context<Self>) -> impl IntoElement {
-        let (c, danger, warn) = {
-            let t = Theme::global(cx);
-            let cc = t.semantic_tokens().colors;
-            (cc, t.danger, t.warning)
-        };
-        let blocked = pr.blocking > 0;
-        let n = pr.pr_number as i64;
-        let title = pr.pr_title.clone().unwrap_or_else(|| format!("PR #{n}"));
-        let title_opt = pr.pr_title.clone();
-
-        div()
-            .id(("pr-row", ix))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_3()
-            .px_4()
-            .py_2()
-            .border_b_1()
-            .border_color(c.border)
-            .hover(|s| s.bg(c.muted))
-            .cursor_pointer()
-            .on_click(cx.listener(move |_, _, _, cx| {
-                cx.emit(ReviewListEvent::Select {
-                    pr: n,
-                    title: title_opt.clone(),
-                });
-            }))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(c.muted_foreground)
-                    .w(px(56.))
-                    .flex_shrink_0()
-                    .child(format!("#{n}")),
-            )
-            .child(div().flex_1().min_w_0().text_sm().child(title))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(c.muted_foreground)
-                    .child(pr.pr_author.clone().unwrap_or_default()),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(c.muted_foreground)
-                    .child(format!("{}r", pr.rounds)),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(if blocked { danger } else { warn })
-                    .w(px(90.))
-                    .child(if blocked {
-                        format!("{} blocking", pr.blocking)
-                    } else {
-                        format!("{} open", pr.unresolved)
-                    }),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(c.muted_foreground)
-                    .child(pr.last_reviewed_at.format("%m-%d %H:%M").to_string()),
-            )
-    }
 }
-
 impl EventEmitter<ReviewListEvent> for ReviewListView {}
-
 impl Render for ReviewListView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (c, danger) = {
-            let t = Theme::global(cx);
-            (t.semantic_tokens().colors, t.danger)
-        };
-
-        let mut list = div()
-            .id("review-list")
-            .flex_1()
-            .min_h_0()
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.clear_draft || self.clear_form {
+            for input in [&self.finding_title, &self.finding_file, &self.finding_line] {
+                input.update(cx, |s, cx| s.set_value("", window, cx));
+            }
+            self.finding_body
+                .update(cx, |s, cx| s.set_value("", window, cx));
+            self.clear_draft = false;
+        }
+        if self.clear_form {
+            for input in [
+                &self.pr_input,
+                &self.sha_input,
+                &self.repo_input,
+                &self.host_input,
+            ] {
+                input.update(cx, |s, cx| s.set_value("", window, cx));
+            }
+            self.summary_input
+                .update(cx, |s, cx| s.set_value("", window, cx));
+            self.clear_form = false;
+        }
+        if self.error != self.shown_error {
+            self.shown_error = self.error.clone();
+            if let Some(e) = &self.error {
+                window.push_notification(Notification::new().message(e.clone()), cx);
+            }
+        }
+        let t = Theme::global(cx).clone();
+        let c = t.semantic_tokens().colors;
+        let mut severity_row = div().flex().flex_wrap().gap_1();
+        for severity in [
+            FindingSeverity::High,
+            FindingSeverity::Medium,
+            FindingSeverity::Low,
+            FindingSeverity::Nit,
+        ] {
+            severity_row = severity_row.child(
+                Button::new(SharedString::from(format!("severity-{severity}")))
+                    .compact()
+                    .selected(self.severity == severity)
+                    .disabled(self.submitting)
+                    .label(severity.to_string())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.severity = severity;
+                        cx.notify();
+                    })),
+            );
+        }
+        let form = div()
             .flex()
             .flex_col()
-            .overflow_y_scroll();
-        for (ix, pr) in self.prs.iter().enumerate() {
-            list = list.child(self.row(pr, ix, cx));
-        }
-        if self.prs.is_empty() && !self.loading {
-            list = list.child(
-                div().p_8().child(
-                    div()
-                        .text_sm()
-                        .text_color(c.muted_foreground)
-                        .child("No reviewed pull requests"),
-                ),
+            .gap_3()
+            .p_4()
+            .border_b_1()
+            .border_color(c.border)
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("New review round"),
+            )
+            .child(
+                Input::new(&self.pr_input)
+                    .disabled(self.submitting)
+                    .id("review-pr"),
+            )
+            .child(
+                Input::new(&self.sha_input)
+                    .disabled(self.submitting)
+                    .id("review-sha"),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(c.muted_foreground)
+                    .child(format!(
+                        "Head SHA: {} / 40 characters",
+                        self.sha_input.read(cx).value().trim().chars().count()
+                    )),
+            )
+            .child(
+                Input::new(&self.repo_input)
+                    .disabled(self.submitting)
+                    .id("review-repository"),
+            )
+            .child(
+                Input::new(&self.host_input)
+                    .disabled(self.submitting)
+                    .id("review-host"),
+            )
+            .child(
+                Textarea::new(&self.summary_input)
+                    .disabled(self.submitting)
+                    .h(px(90.)),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(c.muted_foreground)
+                    .child("Draft findings · added together on submit"),
+            )
+            .children(self.drafts.iter().enumerate().map(|(ix, f)| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_sm()
+                            .child(format!("{} · {}", f.severity, f.title)),
+                    )
+                    .child(
+                        Button::new(("remove-draft", ix))
+                            .disabled(self.submitting)
+                            .compact()
+                            .ghost()
+                            .label("Remove")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if ix < this.drafts.len() {
+                                    this.drafts.remove(ix);
+                                }
+                                cx.notify();
+                            })),
+                    )
+            }))
+            .child(
+                Input::new(&self.finding_title)
+                    .disabled(self.submitting)
+                    .id("draft-finding-title"),
+            )
+            .child(severity_row)
+            .child(
+                Textarea::new(&self.finding_body)
+                    .disabled(self.submitting)
+                    .h(px(100.)),
+            )
+            .child(
+                Input::new(&self.finding_file)
+                    .disabled(self.submitting)
+                    .id("draft-finding-file"),
+            )
+            .child(
+                Input::new(&self.finding_line)
+                    .disabled(self.submitting)
+                    .id("draft-finding-line"),
+            )
+            .child(
+                Button::new("add-finding")
+                    .label("Add finding to draft")
+                    .disabled(self.submitting)
+                    .on_click(cx.listener(|this, _, _, cx| this.add_finding(cx))),
+            )
+            .child(
+                Button::new("submit-review")
+                    .primary()
+                    .label(if self.submitting {
+                        "Submitting…".into()
+                    } else {
+                        format!("Submit round ({} findings)", self.drafts.len())
+                    })
+                    .disabled(self.submitting)
+                    .on_click(cx.listener(|this, _, _, cx| this.create_review(cx))),
             );
-        }
-        if self.loading {
-            list = list.child(
-                div().p_4().child(
-                    div()
-                        .text_xs()
-                        .text_color(c.muted_foreground)
-                        .child("Loading…"),
-                ),
-            );
-        }
-
+        self.list_state.update(cx, |state, cx| {
+            state.delegate_mut().rows = self.prs.clone();
+            state.delegate_mut().loading = self.loading;
+            state.set_selected_index(self.selected.map(IndexPath::new), window, cx);
+            cx.notify();
+        });
+        let content = if self.show_create {
+            div()
+                .id("review-draft-scroll")
+                .size_full()
+                .overflow_y_scroll()
+                .child(form)
+                .into_any_element()
+        } else {
+            List::new(&self.list_state).into_any_element()
+        };
         div()
+            .id("review-list-view")
             .flex()
             .flex_col()
             .size_full()
+            .min_w_0()
+            .min_h_0()
             .child(
                 div()
                     .flex()
-                    .flex_row()
+                    .flex_shrink_0()
                     .items_center()
+                    .flex_wrap()
                     .gap_2()
                     .px_4()
                     .py_2()
@@ -267,48 +661,69 @@ impl Render for ReviewListView {
                         Button::new("rv-refresh")
                             .ghost()
                             .icon(IconName::RefreshCcwDot)
+                            .tooltip("Refresh reviews")
                             .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
                     )
                     .child(
                         Button::new("rv-new")
-                            .ghost()
-                            .icon(IconName::Plus)
-                            .label("New review")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.show_create = !this.show_create;
-                                cx.notify();
+                            .compact()
+                            .label(if self.show_create {
+                                "Close draft"
+                            } else {
+                                "New review"
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                if this.show_create {
+                                    this.show_create = false;
+                                    cx.notify();
+                                } else {
+                                    this.start_review(window, cx);
+                                }
                             })),
                     ),
             )
-            .when(self.show_create, |d| {
-                d.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .px_4()
-                        .py_2()
-                        .border_b_1()
-                        .border_color(c.border)
-                        .child(div().w(px(100.)).child(Input::new(&self.pr_input)))
-                        .child(div().flex_1().child(Input::new(&self.sha_input)))
-                        .child(
-                            Button::new("rv-create")
-                                .ghost()
-                                .label("Create")
-                                .on_click(cx.listener(|this, _, _, cx| this.create_review(cx))),
-                        ),
-                )
-            })
-            .when_some(self.error.clone(), |d, e| {
-                d.child(
+            .when_some(self.error.clone(), |view, error| {
+                view.child(
                     div()
                         .px_4()
                         .py_2()
-                        .child(div().text_sm().text_color(danger).child(e)),
+                        .flex_shrink_0()
+                        .child(Alert::error("review-form-error", error)),
                 )
             })
-            .child(list)
+            .child(
+                div()
+                    .id("review-list-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .child(content),
+            )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::review_request;
+
+    #[test]
+    fn corrected_sha_builds_a_zero_finding_review_request() {
+        assert!(review_request("42", "ABC123", "", vec![]).is_err());
+        let request =
+            review_request("42", "0123456789abcdef0123456789abcdef01234567", "", vec![]).unwrap();
+        assert_eq!(request.pr_number, 42);
+        assert!(request.findings.is_empty());
+        assert_eq!(
+            String::from(request.head_sha),
+            "0123456789abcdef0123456789abcdef01234567"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_pr_and_reports_incomplete_sha_length() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        assert!(review_request("0", sha, "", vec![]).is_err());
+        let error = review_request("42", "ABC123", "", vec![]).unwrap_err();
+        assert!(error.contains("6 characters entered"));
+        assert!(review_request("42", &sha.to_uppercase(), "", vec![]).is_err());
     }
 }

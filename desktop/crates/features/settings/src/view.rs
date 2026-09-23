@@ -4,11 +4,12 @@
 
 use core::settings::Appearance;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::Icon;
 use gpui_kit::component::Theme;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::radio::RadioGroup;
+use gpui_kit::component::{Disableable, Icon};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
@@ -22,6 +23,16 @@ pub enum SettingsEvent {
 
 const KEY_PALETTE: &str = "command_palette";
 const KEY_SEARCH: &str = "quick_search";
+const DEFAULT_PALETTE: &str = if cfg!(target_os = "macos") {
+    "cmd-k"
+} else {
+    "ctrl-k"
+};
+const DEFAULT_SEARCH: &str = if cfg!(target_os = "macos") {
+    "cmd-p"
+} else {
+    "ctrl-p"
+};
 
 /// devices 一覧から自分を突き合わせる device 名（core::auth と同一規則）。
 fn device_name() -> String {
@@ -34,9 +45,15 @@ pub struct SettingsView {
     client: Option<api::Client>,
     autolaunch: Option<::platform::AutoLaunchHandle>,
     devices: Vec<api::spec::Device>,
+    profile: Option<api::types::UserResponse>,
+    profile_loading: bool,
+    profile_error: Option<SharedString>,
     palette_key: Entity<InputState>,
     search_key: Entity<InputState>,
     notice: Option<SharedString>,
+    device_generation: u64,
+    devices_loading: bool,
+    background_available: bool,
 }
 
 impl EventEmitter<SettingsEvent> for SettingsView {}
@@ -50,10 +67,14 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> Self {
         let palette_key = cx.new(|cx| {
-            InputState::new(window, cx).default_value(key_or(&settings, KEY_PALETTE, "ctrl-k"))
+            InputState::new(window, cx).default_value(key_or(
+                &settings,
+                KEY_PALETTE,
+                DEFAULT_PALETTE,
+            ))
         });
         let search_key = cx.new(|cx| {
-            InputState::new(window, cx).default_value(key_or(&settings, KEY_SEARCH, "ctrl-p"))
+            InputState::new(window, cx).default_value(key_or(&settings, KEY_SEARCH, DEFAULT_SEARCH))
         });
 
         // Launch at Login の実状態を OS 側から初期値に使う。
@@ -71,55 +92,129 @@ impl SettingsView {
             client: client.clone(),
             autolaunch,
             devices: vec![],
+            profile: None,
+            profile_loading: client.is_some(),
+            profile_error: None,
             palette_key,
             search_key,
             notice: None,
+            device_generation: 0,
+            devices_loading: client.is_some(),
+            background_available: true,
         };
         if let Some(client) = client {
             this.refresh_devices(&client, cx);
+            this.refresh_profile(&client, cx);
         }
         this
     }
 
     /// ログイン後にクライアントが出来た時に差し替えて devices を再取得。
     pub fn set_client(&mut self, client: api::Client, cx: &mut Context<Self>) {
+        self.device_generation += 1;
+        self.devices_loading = true;
+        self.profile_loading = true;
+        self.profile = None;
+        self.profile_error = None;
         self.client = Some(client.clone());
         self.refresh_devices(&client, cx);
+        self.refresh_profile(&client, cx);
+    }
+
+    pub fn clear_client(&mut self, cx: &mut Context<Self>) {
+        self.device_generation += 1;
+        self.client = None;
+        self.devices.clear();
+        self.devices_loading = false;
+        self.profile = None;
+        self.profile_loading = false;
+        self.profile_error = None;
+        self.notice = None;
+        cx.notify();
+    }
+
+    pub fn set_background_available(&mut self, available: bool, cx: &mut Context<Self>) {
+        self.background_available = available;
+        cx.notify();
     }
 
     /// 設定を変更 → 保存 → app へ通知。
     fn mutate(&mut self, f: impl FnOnce(&mut core::Settings), cx: &mut Context<Self>) {
-        f(&mut self.settings);
-        let _ = self.store.save(&self.settings);
-        cx.emit(SettingsEvent::Changed(self.settings.clone()));
+        let mut updated = self.settings.clone();
+        f(&mut updated);
+        // Navigation and notification sync may have saved newer state meanwhile.
+        let latest = self.store.load();
+        updated.notification_cursor = latest.notification_cursor;
+        updated.window_layout = latest.window_layout;
+        updated.last_tenant_id = latest.last_tenant_id;
+        match self.store.save(&updated) {
+            Ok(()) => {
+                self.settings = updated;
+                self.notice = None;
+                cx.emit(SettingsEvent::Changed(self.settings.clone()));
+            }
+            Err(error) => self.notice = Some(format!("Could not save settings: {error}").into()),
+        }
         cx.notify();
     }
 
     fn refresh_devices(&self, client: &api::Client, cx: &mut Context<Self>) {
         let client = client.clone();
+        let generation = self.device_generation;
         cx.spawn(async move |this, cx| {
-            if let Ok(list) = client.list_devices().await {
-                let _ = this.update(cx, |s, cx| {
-                    s.devices = list.devices;
-                    cx.notify();
-                });
-            }
+            let result = client.list_devices().await;
+            let _ = this.update(cx, |s, cx| {
+                if s.device_generation != generation {
+                    return;
+                }
+                s.devices_loading = false;
+                match result {
+                    Ok(list) => s.devices = list.devices,
+                    Err(error) => s.notice = Some(error.to_string().into()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn refresh_profile(&self, client: &api::Client, cx: &mut Context<Self>) {
+        let client = client.clone();
+        let generation = self.device_generation;
+        cx.spawn(async move |this, cx| {
+            let result = client.get_me().await;
+            let _ = this.update(cx, |this, cx| {
+                if this.device_generation != generation {
+                    return;
+                }
+                this.profile_loading = false;
+                match result {
+                    Ok(profile) => this.profile = Some(profile),
+                    Err(error) => this.profile_error = Some(error.to_string().into()),
+                }
+                cx.notify();
+            });
         })
         .detach();
     }
 
     fn revoke_device(&mut self, id: uuid::Uuid, cx: &mut Context<Self>) {
+        if self.own_device_id() == Some(id) {
+            self.logout(cx);
+            return;
+        }
         let Some(client) = self.client.clone() else {
             return;
         };
         cx.spawn(async move |this, cx| {
-            let ok = client.delete_device(id).await.is_ok();
+            let result = client.delete_device(id).await;
             let _ = this.update(cx, |s, cx| {
-                if ok {
-                    s.devices.retain(|d| d.id != id);
-                    s.notice = Some("Device removed".into());
-                } else {
-                    s.notice = Some("Failed to remove device".into());
+                match result {
+                    Ok(()) => {
+                        s.devices.retain(|d| d.id != id);
+                        s.notice = Some("Device removed".into());
+                    }
+                    Err(error) => s.notice = Some(error.to_string().into()),
                 }
                 cx.notify();
             });
@@ -130,18 +225,18 @@ impl SettingsView {
     /// §6 Logout: 自分の device を DELETE → credential 削除 → LoggedOut。
     /// 自分が一覧で特定できなくてもローカル token は確実に消す。
     fn logout(&mut self, cx: &mut Context<Self>) {
-        let api_base = self.settings.api_base.clone();
         let own = self.own_device_id();
+        let client = self.client.clone();
         cx.spawn(async move |this, cx| {
-            if let Some(id) = own {
-                let _ = core::auth::logout(&api_base, id).await;
-            } else {
+            if let (Some(client), Some(id)) = (client, own) {
+                let _ = client.delete_device(id).await;
+            }
+            if std::env::var_os("KOYORI_DEV_TOKEN").is_none() {
                 let _ = ::platform::CredentialStore::new(::platform::CREDENTIAL_SERVICE)
                     .delete(::platform::CREDENTIAL_ACCOUNT_TOKEN);
             }
             let _ = this.update(cx, |s, cx| {
-                s.client = None;
-                s.devices.clear();
+                s.clear_client(cx);
                 cx.emit(SettingsEvent::LoggedOut);
                 cx.notify();
             });
@@ -151,7 +246,11 @@ impl SettingsView {
 
     fn own_device_id(&self) -> Option<uuid::Uuid> {
         let name = device_name();
-        self.devices.iter().find(|d| d.name == name).map(|d| d.id)
+        let mut matches = self.devices.iter().filter(|d| d.name == name);
+        let first = matches.next()?;
+        // Until the backend supplies an explicit current-device identity, do
+        // not revoke an arbitrary device when several share this hostname.
+        matches.next().is_none().then_some(first.id)
     }
 
     fn save_keybindings(&mut self, cx: &mut Context<Self>) {
@@ -162,6 +261,16 @@ impl SettingsView {
             cx.notify();
             return;
         }
+        let valid = |key: &str| {
+            key.split_whitespace()
+                .all(|part| Keystroke::parse(part).is_ok())
+        };
+        if !valid(&palette) || !valid(&search) || palette == search {
+            self.notice =
+                Some("Use two different valid shortcuts, such as ctrl-k and ctrl-p".into());
+            cx.notify();
+            return;
+        }
         self.mutate(
             |s| {
                 s.keybindings.insert(KEY_PALETTE.into(), palette.clone());
@@ -169,7 +278,9 @@ impl SettingsView {
             },
             cx,
         );
-        self.notice = Some("Saved. Takes effect after restart.".into());
+        if self.notice.is_none() {
+            self.notice = Some("Saved. Takes effect after restart.".into());
+        }
         cx.notify();
     }
 
@@ -179,6 +290,10 @@ impl SettingsView {
         div()
             .flex()
             .flex_col()
+            .flex_shrink_0()
+            .min_w_0()
+            .w_full()
+            .items_start()
             .gap_2()
             .child(
                 div()
@@ -202,6 +317,7 @@ impl SettingsView {
         Checkbox::new(id)
             .label(label)
             .checked(checked)
+            .disabled(id == "keep-bg" && !self.background_available)
             .on_click(move |v, _, cx| {
                 let _ = weak.update(cx, |this, cx| {
                     this.mutate(|s| f(s, *v), cx);
@@ -223,7 +339,7 @@ impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (muted_fg, accent) = {
             let t = Theme::global(cx);
-            (t.muted_foreground, t.accent)
+            (t.muted_foreground, t.primary)
         };
         let s = &self.settings;
 
@@ -234,12 +350,27 @@ impl Render for SettingsView {
             Checkbox::new("launch-at-login")
                 .label("Launch at Login")
                 .checked(checked)
+                .disabled(self.autolaunch.is_none())
                 .on_click(move |v, _, cx| {
                     let _ = weak.update(cx, |this, cx| {
-                        if let Some(h) = &this.autolaunch {
-                            let _ = if *v { h.enable() } else { h.disable() };
+                        if let Some(h) = &this.autolaunch
+                            && let Err(error) = if *v { h.enable() } else { h.disable() }
+                        {
+                            this.notice =
+                                Some(format!("Could not update login startup: {error}").into());
+                            cx.notify();
+                            return;
                         }
                         this.mutate(|s| s.launch_at_login = *v, cx);
+                        if this.settings.launch_at_login != *v
+                            && let Some(h) = &this.autolaunch
+                        {
+                            let _ = if this.settings.launch_at_login {
+                                h.enable()
+                            } else {
+                                h.disable()
+                            };
+                        }
                     });
                 })
                 .into_any_element()
@@ -250,8 +381,12 @@ impl Render for SettingsView {
                 launch_toggle,
                 self.toggle(
                     "keep-bg",
-                    "Keep Running in Background",
-                    s.keep_running_in_background,
+                    if self.background_available {
+                        "Keep Running in Background"
+                    } else {
+                        "Background mode unavailable (no system tray)"
+                    },
+                    s.keep_running_in_background && self.background_available,
                     cx,
                     |s, v| s.keep_running_in_background = v,
                 ),
@@ -259,7 +394,6 @@ impl Render for SettingsView {
         );
 
         // Notifications（§22: ローカルの OS 通知 ON/OFF のみ。プロジェクト毎は Web）
-        let web = s.web_base.clone();
         let notifications = self.section(
             "Notifications",
             vec![
@@ -289,37 +423,27 @@ impl Render for SettingsView {
                 ),
                 Button::new("notif-web-link")
                     .ghost()
-                    .label("Per-project notification settings (Web)")
+                    .label("Project notification settings (Web)")
                     .icon(Icon::new(IconName::ExternalLink))
-                    .on_click(move |_, _, _| {
-                        let _ = ::platform::open_url(&format!("{web}/settings/notifications"));
-                    })
+                    .disabled(true)
+                    .tooltip("Project notification settings are not available on the website yet")
                     .into_any_element(),
             ],
         );
 
         // Appearance
-        let mk_appearance = |label: &'static str, value: Appearance, cx: &mut Context<Self>| {
-            let active = s.appearance == value;
-            Button::new(SharedString::from(format!("appearance-{label}")))
-                .when(active, |b| b.primary())
-                .when(!active, |b| b.outline())
-                .label(label)
-                .on_click(
-                    cx.listener(move |this, _, _, cx| this.mutate(|s| s.appearance = value, cx)),
-                )
-                .into_any_element()
-        };
+        let appearances = [Appearance::Light, Appearance::Dark, Appearance::System];
         let appearance = self.section(
             "Appearance",
             vec![
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .child(mk_appearance("Light", Appearance::Light, cx))
-                    .child(mk_appearance("Dark", Appearance::Dark, cx))
-                    .child(mk_appearance("System", Appearance::System, cx))
+                RadioGroup::horizontal("appearance")
+                    .children(["Light", "Dark", "System"])
+                    .selected_index(appearances.iter().position(|value| *value == s.appearance))
+                    .on_change(cx.listener(move |this, index: &usize, _, cx| {
+                        if let Some(appearance) = appearances.get(*index) {
+                            this.mutate(|settings| settings.appearance = *appearance, cx);
+                        }
+                    }))
                     .into_any_element(),
             ],
         );
@@ -331,22 +455,27 @@ impl Render for SettingsView {
                 div()
                     .flex()
                     .flex_row()
+                    .flex_wrap()
+                    .w_full()
                     .items_center()
                     .gap_2()
-                    .child(div().w(px(160.)).child("Command Palette"))
+                    .child(div().w(px(160.)).flex_shrink_0().child("Command Palette"))
                     .child(Input::new(&self.palette_key).w(px(200.)))
                     .into_any_element(),
                 div()
                     .flex()
                     .flex_row()
+                    .flex_wrap()
+                    .w_full()
                     .items_center()
                     .gap_2()
-                    .child(div().w(px(160.)).child("Quick Search"))
+                    .child(div().w(px(160.)).flex_shrink_0().child("Quick Search"))
                     .child(Input::new(&self.search_key).w(px(200.)))
                     .into_any_element(),
                 div()
                     .flex()
                     .flex_row()
+                    .flex_wrap()
                     .items_center()
                     .gap_2()
                     .child(
@@ -366,12 +495,12 @@ impl Render for SettingsView {
         );
 
         // Account
-        let name = device_name();
+        let own_device_id = self.own_device_id();
         let device_rows: Vec<AnyElement> = self
             .devices
             .iter()
             .map(|d| {
-                let own = d.name == name;
+                let own = Some(d.id) == own_device_id;
                 let id = d.id;
                 let last = d
                     .last_used_at
@@ -381,18 +510,39 @@ impl Render for SettingsView {
                 div()
                     .flex()
                     .flex_row()
+                    .w_full()
+                    .min_w_0()
                     .items_center()
                     .gap_3()
-                    .child(div().w(px(200.)).child(format!(
-                        "{}{}",
-                        d.name,
-                        if own { " (this device)" } else { "" }
-                    )))
-                    .child(div().w(px(150.)).child(format!("last used {last}")))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(div().text_sm().child(format!(
+                                "{}{}",
+                                d.name,
+                                if own { " (this device)" } else { "" }
+                            )))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted_fg)
+                                    .child(format!("Last used {last}")),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted_fg)
+                                    .child(format!("Expires {}", d.expires_at.format("%Y-%m-%d"))),
+                            ),
+                    )
                     .child(
                         Button::new(SharedString::from(format!("revoke-{id}")))
                             .ghost()
-                            .label("Revoke")
+                            .label(if own { "Logout" } else { "Revoke" })
                             .on_click(move |_, _, cx| {
                                 let _ = weak.update(cx, |this, cx| this.revoke_device(id, cx));
                             }),
@@ -400,24 +550,90 @@ impl Render for SettingsView {
                     .into_any_element()
             })
             .collect();
-        let mut account_children = vec![
-            div()
-                .text_sm()
-                .text_color(muted_fg)
-                .child(format!("API: {}", s.api_base))
-                .into_any_element(),
+        let mut account_children = vec![];
+        if let Some(profile) = &self.profile {
+            account_children.push(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .w_full()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(profile.username.clone()),
+                    )
+                    .child(div().text_color(muted_fg).child(profile.email.clone()))
+                    .child(div().text_xs().text_color(muted_fg).child(format!(
+                        "Email {} · Two-factor authentication {}",
+                        if profile.email_verified {
+                            "verified"
+                        } else {
+                            "not verified"
+                        },
+                        if profile.totp_enabled {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    )))
+                    .into_any_element(),
+            );
+        } else {
+            account_children.push(
+                div()
+                    .text_sm()
+                    .text_color(muted_fg)
+                    .child(if self.profile_loading {
+                        "Loading account information…"
+                    } else if self.client.is_some() {
+                        "Signed in to Koyori"
+                    } else {
+                        "Not signed in"
+                    })
+                    .into_any_element(),
+            );
+        }
+        if let Some(error) = &self.profile_error {
+            account_children.push(
+                div()
+                    .text_sm()
+                    .child(format!("Could not load account: {error}"))
+                    .into_any_element(),
+            );
+            account_children.push(
+                Button::new("reload-account")
+                    .ghost()
+                    .label("Retry account information")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(client) = this.client.clone() {
+                            this.profile_loading = true;
+                            this.profile_error = None;
+                            this.refresh_profile(&client, cx);
+                            cx.notify();
+                        }
+                    }))
+                    .into_any_element(),
+            );
+        }
+        account_children.push(
             div()
                 .text_sm()
                 .font_weight(FontWeight::MEDIUM)
                 .child("Devices")
                 .into_any_element(),
-        ];
+        );
         if device_rows.is_empty() {
             account_children.push(
                 div()
                     .text_sm()
                     .text_color(muted_fg)
-                    .child("No devices")
+                    .child(if self.devices_loading {
+                        "Loading devices…"
+                    } else {
+                        "No devices"
+                    })
                     .into_any_element(),
             );
         } else {
@@ -426,6 +642,7 @@ impl Render for SettingsView {
         account_children.push(
             Button::new("logout")
                 .outline()
+                .disabled(self.client.is_none())
                 .label("Logout")
                 .icon(Icon::new(IconName::LogOut))
                 .on_click(cx.listener(|this, _, _, cx| this.logout(cx)))
@@ -434,14 +651,19 @@ impl Render for SettingsView {
         let account = self.section("Account", account_children);
 
         div()
-            .flex_1()
-            .h_full()
+            .id("settings-scroll")
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .overflow_y_scroll()
             .p_6()
             .flex()
             .flex_col()
             .gap_6()
+            .text_sm()
             .child(
                 div()
+                    .flex_shrink_0()
                     .text_xl()
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("Settings"),

@@ -5,5 +5,5 @@
 mod detail;
 mod list;
 
-pub use detail::ReviewDetailView;
+pub use detail::{ReviewDetailEvent, ReviewDetailView};
 pub use list::{ReviewListEvent, ReviewListView};

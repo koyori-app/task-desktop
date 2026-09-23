@@ -1,7 +1,7 @@
 //! 一覧行の正規化モデル。MyTaskItem / TaskResponse の両方から作る。
 
 use api::types::{MyTaskItem, TaskPriority, TaskResponse};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -62,27 +62,29 @@ pub fn parse_hex_color(s: &str) -> Option<gpui_kit::Hsla> {
     if h.len() != 6 {
         return None;
     }
-    let r = u8::from_str_radix(&h[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&h[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&h[4..6], 16).ok()?;
-    Some(gpui_kit::hsla(
-        (r as f32) / 255.0,
-        (g as f32) / 255.0,
-        (b as f32) / 255.0,
-        1.0,
-    ))
+    let rgb = u32::from_str_radix(h, 16).ok()?;
+    Some(gpui_kit::rgb(rgb).into())
 }
 
 /// "today" / "tomorrow" / "2026-09-24" / "3d ago" 程度の簡易表記。
 pub fn due_label(due: &DateTime<Utc>) -> String {
-    let today = Utc::now().date_naive();
-    let d = due.date_naive();
+    let today = Local::now().date_naive();
+    let d = due.with_timezone(&Local).date_naive();
     match (d - today).num_days() {
         0 => "today".into(),
         1 => "tomorrow".into(),
         n if n < 0 => format!("{}d overdue", -n),
         _ => d.format("%Y-%m-%d").to_string(),
     }
+}
+
+/// A date entered by the user belongs to their local calendar day.
+pub fn due_timestamp(value: &str, timezone: &impl TimeZone) -> Option<DateTime<Utc>> {
+    let date = NaiveDate::parse_from_str(value, "%Y-%m-%d").ok()?;
+    timezone
+        .from_local_datetime(&date.and_hms_opt(0, 0, 0)?)
+        .earliest()
+        .map(|date| date.with_timezone(&Utc))
 }
 
 #[cfg(test)]
@@ -92,7 +94,27 @@ mod tests {
     #[test]
     fn hex_color_parses() {
         let c = parse_hex_color("#ff0000").unwrap();
-        assert!((c.h - 1.0).abs() < 0.01);
+        assert!(c.h.abs() < 0.01);
+        assert!((c.s - 1.0).abs() < 0.01);
+        assert!((c.l - 0.5).abs() < 0.01);
         assert!(parse_hex_color("nope").is_none());
+        assert!(parse_hex_color("ああ").is_none());
+        let green = parse_hex_color("#00ff00").unwrap();
+        assert!((green.h - 1.0 / 3.0).abs() < 0.01);
+        let blue = parse_hex_color("#0000ff").unwrap();
+        assert!((blue.h - 2.0 / 3.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn entered_due_day_roundtrips_east_and_west_of_utc() {
+        for seconds in [9 * 3600, -7 * 3600] {
+            let timezone = chrono::FixedOffset::east_opt(seconds).unwrap();
+            let due = due_timestamp("2026-09-24", &timezone).unwrap();
+            assert_eq!(
+                due.with_timezone(&timezone).format("%Y-%m-%d").to_string(),
+                "2026-09-24"
+            );
+        }
+        assert!(due_timestamp("2026-02-30", &Utc).is_none());
     }
 }

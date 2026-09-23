@@ -7,8 +7,11 @@ use api::spec::{NotificationItem, NotificationKind, NotificationProject, Notific
 use chrono::{DateTime, Utc};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::Icon;
+use gpui_kit::component::IndexPath;
 use gpui_kit::component::Theme;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::list::{List, ListDelegate, ListItem, ListState};
+use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
@@ -52,8 +55,17 @@ impl Filter {
         match self {
             Self::All => true,
             Self::Unread => item.read_at.is_none(),
-            Self::Task => item.notification_type.starts_with("task"),
-            // 本番の古い type（"assigned" 等）は task 系扱いにしない
+            Self::Task => {
+                item.notification_type.starts_with("task")
+                    || matches!(
+                        item.notification_type.as_str(),
+                        "assigned"
+                            | "mentioned"
+                            | "status_changed"
+                            | "comment_added"
+                            | "deadline_soon"
+                    )
+            }
             Self::Review => {
                 item.notification_type.starts_with("review")
                     || item.notification_type.starts_with("finding")
@@ -73,6 +85,94 @@ pub struct NavTarget {
 #[derive(Debug, Clone)]
 pub enum CenterEvent {
     Navigate(NavTarget),
+    /// Authoritative count returned by the list endpoint, after reads too.
+    UnreadCount(i64),
+}
+
+struct NotificationListDelegate {
+    owner: WeakEntity<NotificationCenter>,
+    items: Vec<NotificationItem>,
+    selected: Option<IndexPath>,
+    loading: bool,
+    signed_in: bool,
+    has_more: bool,
+}
+
+impl ListDelegate for NotificationListDelegate {
+    type Item = ListItem;
+
+    fn items_count(&self, _: usize, _: &App) -> usize {
+        self.items.len()
+    }
+
+    fn render_item(
+        &mut self,
+        index: IndexPath,
+        _: &mut Window,
+        cx: &mut Context<ListState<Self>>,
+    ) -> Option<Self::Item> {
+        self.items
+            .get(index.row)
+            .map(|item| NotificationCenter::row(item, index.row, cx))
+    }
+
+    fn set_selected_index(
+        &mut self,
+        index: Option<IndexPath>,
+        _: &mut Window,
+        _: &mut Context<ListState<Self>>,
+    ) {
+        self.selected = index;
+    }
+
+    fn confirm(&mut self, _: bool, _: &mut Window, cx: &mut Context<ListState<Self>>) {
+        let Some(item) = self.selected.and_then(|index| self.items.get(index.row)) else {
+            return;
+        };
+        let id = item.id;
+        let owner = self.owner.clone();
+        cx.defer(move |cx| {
+            let _ = owner.update(cx, |owner, cx| {
+                if let Some(index) = owner.items.iter().position(|item| item.id == id) {
+                    owner.open(index, cx);
+                }
+            });
+        });
+    }
+
+    fn loading(&self, _: &App) -> bool {
+        self.loading && self.items.is_empty()
+    }
+
+    fn render_empty(
+        &mut self,
+        _: &mut Window,
+        cx: &mut Context<ListState<Self>>,
+    ) -> impl IntoElement {
+        div()
+            .p_8()
+            .text_sm()
+            .text_color(Theme::global(cx).muted_foreground)
+            .child(if self.signed_in {
+                "No notifications"
+            } else {
+                "Sign in to see notifications"
+            })
+    }
+
+    fn has_more(&self, _: &App) -> bool {
+        self.has_more && !self.loading
+    }
+    fn load_more_threshold(&self) -> usize {
+        5
+    }
+
+    fn load_more(&mut self, _: &mut Window, cx: &mut Context<ListState<Self>>) {
+        let owner = self.owner.clone();
+        cx.defer(move |cx| {
+            let _ = owner.update(cx, |owner, cx| owner.load_more(cx));
+        });
+    }
 }
 
 /// Notification Center の View。履歴ページング用カーソルは
@@ -84,6 +184,9 @@ pub struct NotificationCenter {
     filter: Filter,
     loading: bool,
     error: Option<String>,
+    request_generation: u64,
+    list: Option<Entity<ListState<NotificationListDelegate>>>,
+    reset_list: bool,
 }
 
 impl NotificationCenter {
@@ -95,6 +198,9 @@ impl NotificationCenter {
             filter: Filter::All,
             loading: false,
             error: None,
+            request_generation: 0,
+            list: None,
+            reset_list: true,
         }
     }
 
@@ -107,6 +213,12 @@ impl NotificationCenter {
     /// ログアウト時に呼ぶ。以降の API 呼び出しを止める。
     pub fn clear_client(&mut self, cx: &mut Context<Self>) {
         self.client = None;
+        self.request_generation += 1;
+        self.items.clear();
+        self.history_cursor = None;
+        self.loading = false;
+        self.error = None;
+        self.reset_list = true;
         cx.notify();
     }
 
@@ -129,15 +241,21 @@ impl NotificationCenter {
             return;
         };
         let query = self.filter.query();
+        self.request_generation += 1;
+        let generation = self.request_generation;
         self.loading = true;
         self.error = None;
         cx.notify();
         cx.spawn(async move |this, cx| {
             let res = client.list_notifications(&query).await;
             let _ = this.update(cx, |this, cx| {
+                if this.request_generation != generation {
+                    return;
+                }
                 this.loading = false;
                 match res {
                     Ok(page) => {
+                        cx.emit(CenterEvent::UnreadCount(page.unread_count));
                         this.items = page.notifications;
                         this.history_cursor = page.next_cursor;
                     }
@@ -151,20 +269,28 @@ impl NotificationCenter {
 
     /// 履歴の続き（`cursor` = このリストの最古行より古いもの）。
     fn load_more(&mut self, cx: &mut Context<Self>) {
+        if self.loading {
+            return;
+        }
         let (Some(client), Some(cursor)) = (self.client.clone(), self.history_cursor.clone())
         else {
             return;
         };
         let mut query = self.filter.query();
         query.cursor = Some(cursor);
+        let generation = self.request_generation;
         self.loading = true;
         cx.notify();
         cx.spawn(async move |this, cx| {
             let res = client.list_notifications(&query).await;
             let _ = this.update(cx, |this, cx| {
+                if this.request_generation != generation {
+                    return;
+                }
                 this.loading = false;
                 match res {
                     Ok(page) => {
+                        cx.emit(CenterEvent::UnreadCount(page.unread_count));
                         for item in page.notifications {
                             if !this.items.iter().any(|i| i.id == item.id) {
                                 this.items.push(item);
@@ -185,24 +311,46 @@ impl NotificationCenter {
             return;
         }
         self.filter = filter;
+        self.items.clear();
+        self.history_cursor = None;
+        self.reset_list = true;
         self.refresh(cx);
     }
 
     /// §12 "Mark all read"。パレットからも呼ぶので pub。
     pub fn mark_all_read(&mut self, cx: &mut Context<Self>) {
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        let old_items = self.items.clone();
+        let generation = self.request_generation;
         let now = Utc::now();
         for item in &mut self.items {
             if item.read_at.is_none() {
                 item.read_at = Some(now);
             }
         }
-        cx.notify();
-        if let Some(client) = self.client.clone() {
-            cx.spawn(async move |_, _| {
-                let _ = client.mark_all_notifications_read().await;
-            })
-            .detach();
+        if self.filter == Filter::Unread {
+            self.items.clear();
         }
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = client.mark_all_notifications_read().await;
+            let _ = this.update(cx, |this, cx| {
+                if this.request_generation != generation || this.client.is_none() {
+                    return;
+                }
+                match result {
+                    Ok(()) => this.refresh(cx),
+                    Err(error) => {
+                        this.items = old_items;
+                        this.error = Some(error.to_string());
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
     }
 
     /// §11: クリック → 既読化 + 遷移要求。
@@ -216,8 +364,25 @@ impl NotificationCenter {
             }
             if let Some(client) = self.client.clone() {
                 let id = item.id;
-                cx.spawn(async move |_, _| {
-                    let _ = client.mark_notification_read(id).await;
+                let generation = self.request_generation;
+                cx.spawn(async move |this, cx| {
+                    let result = client.mark_notification_read(id).await;
+                    let _ = this.update(cx, |this, cx| {
+                        if this.request_generation != generation || this.client.is_none() {
+                            return;
+                        }
+                        match result {
+                            Ok(()) => this.refresh(cx),
+                            Err(error) => {
+                                if let Some(item) = this.items.iter_mut().find(|item| item.id == id)
+                                {
+                                    item.read_at = None;
+                                }
+                                this.error = Some(error.to_string());
+                                cx.notify();
+                            }
+                        }
+                    });
                 })
                 .detach();
             }
@@ -235,69 +400,77 @@ impl NotificationCenter {
             IconName::SquareCheck
         } else if t.starts_with("finding") {
             IconName::TriangleAlert
-        } else if t.starts_with("task") || t == "assigned" {
+        } else if Filter::Task.matches(item) {
             IconName::ClipboardList
         } else {
             IconName::Bell
         }
     }
 
-    fn row(&self, item: &NotificationItem, ix: usize, cx: &mut Context<Self>) -> impl IntoElement {
+    fn row(item: &NotificationItem, ix: usize, cx: &App) -> ListItem {
         let c = Theme::global(cx).semantic_tokens().colors;
+        let primary = Theme::global(cx).primary;
         let unread = item.read_at.is_none();
         let text = core::notify_text::toast(item);
         let title: SharedString = text.title.into();
         let body: SharedString = text.body.into();
         let time: SharedString = relative_time(&item.created_at).into();
 
-        div()
-            .id(("nc-row", ix))
-            .flex()
-            .flex_row()
-            .items_start()
-            .gap_3()
+        ListItem::new(("nc-row", ix))
+            .h(px(92.))
             .px_4()
-            .py_3()
-            .border_b_1()
-            .border_color(c.border)
-            .when(unread, |d| d.bg(c.muted))
-            .hover(|s| s.bg(c.muted))
-            .cursor_pointer()
-            .on_click(cx.listener(move |this, _, _, cx| this.open(ix, cx)))
+            .py_2()
+            .when(unread, |row| row.bg(c.muted))
             .child(
                 div()
-                    .mt_1()
-                    .size(px(8.))
-                    .rounded_full()
-                    .flex_shrink_0()
-                    .when(unread, |d| d.bg(c.accent)),
-            )
-            .child(
-                Icon::new(Self::kind_icon(item))
-                    .size_4()
-                    .text_color(c.muted_foreground),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
                     .flex()
-                    .flex_col()
-                    .gap_1()
+                    .flex_row()
+                    .items_start()
+                    .gap_3()
+                    .w_full()
+                    .min_w_0()
                     .child(
                         div()
-                            .text_sm()
-                            .font_weight(if unread {
-                                FontWeight::SEMIBOLD
-                            } else {
-                                FontWeight::NORMAL
-                            })
-                            .child(title),
+                            .mt_1()
+                            .size(px(8.))
+                            .rounded_full()
+                            .flex_shrink_0()
+                            .when(unread, |d| d.bg(primary)),
                     )
-                    .when(!body.is_empty(), |d| {
-                        d.child(div().text_xs().text_color(c.muted_foreground).child(body))
-                    })
-                    .child(div().text_xs().text_color(c.muted_foreground).child(time)),
+                    .child(
+                        Icon::new(Self::kind_icon(item))
+                            .size_4()
+                            .text_color(c.muted_foreground),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_sm()
+                                    .font_weight(if unread {
+                                        FontWeight::SEMIBOLD
+                                    } else {
+                                        FontWeight::NORMAL
+                                    })
+                                    .child(title),
+                            )
+                            .when(!body.is_empty(), |d| {
+                                d.child(
+                                    div()
+                                        .truncate()
+                                        .text_xs()
+                                        .text_color(c.muted_foreground)
+                                        .child(body),
+                                )
+                            })
+                            .child(div().text_xs().text_color(c.muted_foreground).child(time)),
+                    ),
             )
     }
 }
@@ -305,63 +478,59 @@ impl NotificationCenter {
 impl EventEmitter<CenterEvent> for NotificationCenter {}
 
 impl Render for NotificationCenter {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (c, danger) = {
             let theme = Theme::global(cx);
             (theme.semantic_tokens().colors, theme.danger)
         };
 
-        let mut list = div()
-            .id("nc-list")
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .overflow_y_scroll();
-        for (ix, item) in self.items.iter().enumerate() {
-            list = list.child(self.row(item, ix, cx));
-        }
-        if self.items.is_empty() && !self.loading {
-            list =
-                list.child(div().flex_1().p_8().child(
-                    div().text_sm().text_color(c.muted_foreground).child(
-                        if self.client.is_some() {
-                            "No notifications"
-                        } else {
-                            "Sign in to see notifications"
+        let list = self
+            .list
+            .get_or_insert_with(|| {
+                let owner = cx.entity().downgrade();
+                cx.new(|cx| {
+                    ListState::new(
+                        NotificationListDelegate {
+                            owner,
+                            items: vec![],
+                            selected: None,
+                            loading: false,
+                            signed_in: false,
+                            has_more: false,
                         },
-                    ),
-                ));
-        }
-        if self.loading {
-            list = list.child(
-                div().p_4().child(
-                    div()
-                        .text_xs()
-                        .text_color(c.muted_foreground)
-                        .child("Loading…"),
-                ),
-            );
-        }
-        if self.history_cursor.is_some() && !self.loading {
-            list = list.child(
-                div().p_2().child(
-                    Button::new("nc-load-more")
-                        .ghost()
-                        .label("Load more")
-                        .on_click(cx.listener(|this, _, _, cx| this.load_more(cx))),
-                ),
-            );
-        }
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .clone();
+        let _ = list.read(cx).focus_handle(cx).tab_stop(true);
+        list.update(cx, |state, cx| {
+            let delegate = state.delegate_mut();
+            delegate.items = self.items.clone();
+            delegate.loading = self.loading;
+            delegate.signed_in = self.client.is_some();
+            delegate.has_more = self.history_cursor.is_some() && self.error.is_none();
+            if self.reset_list {
+                state.set_selected_index(None, window, cx);
+                state.scroll_to_item(IndexPath::default(), ScrollStrategy::Top, window, cx);
+            }
+            cx.notify();
+        });
+        self.reset_list = false;
 
         div()
             .flex()
             .flex_col()
             .size_full()
+            .min_w_0()
+            .min_h_0()
             .child(
                 div()
                     .flex()
                     .flex_row()
+                    .flex_shrink_0()
+                    .flex_wrap()
                     .items_center()
                     .gap_2()
                     .px_4()
@@ -393,27 +562,27 @@ impl Render for NotificationCenter {
                 div()
                     .flex()
                     .flex_row()
+                    .flex_shrink_0()
                     .gap_1()
                     .px_4()
                     .py_2()
                     .border_b_1()
                     .border_color(c.border)
-                    .children(Filter::ALL.iter().map(|f| {
-                        let active = *f == self.filter;
-                        div()
-                            .id(("nc-filter", *f as usize))
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .text_sm()
-                            .cursor_pointer()
-                            .when(active, |d| d.bg(c.accent).text_color(c.accent_foreground))
-                            .when(!active, |d| {
-                                d.text_color(c.muted_foreground).hover(|s| s.bg(c.muted))
-                            })
-                            .child(f.label())
-                            .on_click(cx.listener(move |this, _, _, cx| this.set_filter(*f, cx)))
-                    })),
+                    .child(
+                        TabBar::new("notification-filters")
+                            .underline()
+                            .selected_index(self.filter as usize)
+                            .children(
+                                Filter::ALL
+                                    .iter()
+                                    .map(|filter| Tab::new().label(filter.label())),
+                            )
+                            .on_click(cx.listener(|this, index: &usize, _, cx| {
+                                if let Some(filter) = Filter::ALL.get(*index) {
+                                    this.set_filter(*filter, cx);
+                                }
+                            })),
+                    ),
             )
             .when_some(self.error.clone(), |d, e| {
                 d.child(
@@ -423,7 +592,16 @@ impl Render for NotificationCenter {
                         .child(div().text_sm().text_color(danger).child(e)),
                 )
             })
-            .child(list)
+            .child(div().flex_1().min_h_0().child(List::new(&list).size_full()))
+            .when(self.loading && !self.items.is_empty(), |view| {
+                view.child(
+                    div()
+                        .p_2()
+                        .text_xs()
+                        .text_color(c.muted_foreground)
+                        .child("Loading…"),
+                )
+            })
     }
 }
 
@@ -447,7 +625,7 @@ fn relative_time(dt: &DateTime<Utc>) -> String {
 mod tests {
     // `use super::*` だと gpui::test が #[test] を shadow するので個別 import。
     use super::{Filter, relative_time};
-    use api::spec::NotificationKind;
+    use api::spec::{NotificationItem, NotificationKind};
     use chrono::Utc;
 
     #[test]
@@ -458,6 +636,35 @@ mod tests {
         let q = Filter::Task.query();
         assert_eq!(q.kind, Some(NotificationKind::Task));
         assert!(q.unread.is_none());
+    }
+
+    #[test]
+    fn task_filter_accepts_backend_notification_names() {
+        let mut item = NotificationItem {
+            id: uuid::Uuid::nil(),
+            notification_type: String::new(),
+            project: None,
+            task: None,
+            payload: Default::default(),
+            target: None,
+            cursor: None,
+            read_at: None,
+            created_at: Utc::now(),
+        };
+        for kind in [
+            "assigned",
+            "mentioned",
+            "status_changed",
+            "comment_added",
+            "task.assigned",
+        ] {
+            item.notification_type = kind.into();
+            assert!(Filter::Task.matches(&item), "{kind}");
+            assert!(!Filter::Review.matches(&item), "{kind}");
+        }
+        item.notification_type = "review.finding_fixed".into();
+        assert!(Filter::Review.matches(&item));
+        assert!(!Filter::Task.matches(&item));
     }
 
     #[test]

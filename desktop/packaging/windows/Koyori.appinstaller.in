@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AppInstaller xmlns="http://schemas.microsoft.com/appx/appinstaller/2021"
+              Version="@VERSION@" Uri="@FEED_URL@">
+  <MainPackage Name="app.koyori.desktop" Publisher="@PUBLISHER@" Version="@VERSION@"
+               ProcessorArchitecture="@ARCH@" Uri="@PACKAGE_URL@" />
+  <UpdateSettings>
+    <OnLaunch HoursBetweenUpdateChecks="4" />
+    <AutomaticBackgroundTask />
+  </UpdateSettings>
+</AppInstaller>

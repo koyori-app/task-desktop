@@ -6,6 +6,6 @@ mod detail;
 mod list;
 mod model;
 
-pub use detail::TaskDetailView;
+pub use detail::{TaskDetailEvent, TaskDetailView};
 pub use list::{ListMode, TaskListEvent, TaskListView};
 pub use model::TaskRow;

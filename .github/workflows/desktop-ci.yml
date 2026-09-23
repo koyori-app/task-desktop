@@ -6,10 +6,12 @@ on:
     paths:
       - 'desktop/**'
       - '.github/workflows/desktop-ci.yml'
+      - 'docs/releasing.md'
   pull_request:
     paths:
       - 'desktop/**'
       - '.github/workflows/desktop-ci.yml'
+      - 'docs/releasing.md'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -24,8 +26,12 @@ defaults:
 
 jobs:
   check:
-    name: fmt / clippy / test / build (Windows)
-    runs-on: windows-latest
+    name: fmt / clippy / test / build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
@@ -38,6 +44,22 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install
 
+      # GPUI X11/Wayland and reqwest native TLS; tray-icon uses the D-Bus KSNI backend.
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang cmake pkg-config libssl-dev \
+            libfontconfig1-dev libfreetype6-dev libxkbcommon-x11-dev libwayland-dev \
+            libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libvulkan-dev libasound2-dev
+
+      # gpui-kit enables runtime_shaders, so no separate Metal download is needed.
+      - name: Verify Xcode toolchain
+        if: runner.os == 'macOS'
+        run: |
+          xcode-select --print-path
+          xcrun --sdk macosx --show-sdk-path
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -46,15 +68,19 @@ jobs:
           # main のキャッシュが追い出され、全ジョブがコールドビルドになる。
           # PR は main のキャッシュを読むだけ。
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          key: ${{ matrix.os }}
 
       - name: fmt
         run: cargo fmt --all -- --check
 
       - name: clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: test
-        run: cargo test --workspace --lib
+        run: cargo test --locked --workspace
 
       - name: build
-        run: cargo build --workspace
+        run: cargo build --locked --workspace
+
+      - name: Validate release packaging templates
+        run: python packaging/package.py --self-test

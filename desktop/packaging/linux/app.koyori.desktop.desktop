@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Koyori
+Comment=Tasks, reviews, and notifications
+Exec=koyori
+Icon=koyori
+Terminal=false
+Categories=Office;ProjectManagement;
+StartupWMClass=app.koyori.desktop

@@ -43,6 +43,7 @@ pub struct Client {
     http: reqwest::Client,
     base: Url,
     token: std::sync::Arc<str>,
+    unauthorized: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Client {
@@ -51,6 +52,8 @@ impl Client {
         let base = Url::parse(base_url)
             .map_err(|e| ApiError::InvalidConfig(format!("{base_url}: {e}")))?;
         let http = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
             .default_headers({
                 let mut h = reqwest::header::HeaderMap::new();
                 h.insert(reqwest::header::ACCEPT, "application/json".parse().unwrap());
@@ -61,7 +64,18 @@ impl Client {
             http,
             base,
             token: token.as_ref().into(),
+            unauthorized: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
+    }
+
+    /// Shared by all cloned clients so any feature's 401 expires the UI session.
+    pub fn is_unauthorized(&self) -> bool {
+        self.unauthorized.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Clones share session identity; a newly authenticated client does not.
+    pub fn same_session(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.unauthorized, &other.unauthorized)
     }
 
     fn url(&self, segments: &[&str]) -> Result<Url> {
@@ -84,16 +98,19 @@ impl Client {
         T: DeserializeOwned,
     {
         let url = self.url(segments)?;
-        let mut req = self
-            .http
-            .request(method, url)
-            .bearer_auth(&*self.token)
-            .query(query);
+        let mut req = self.http.request(method, url).query(query);
+        if !self.token.is_empty() {
+            req = req.bearer_auth(&*self.token);
+        }
         if let Some(b) = body {
             req = req.json(&b);
         }
         let resp = req.send().await?;
         let status = resp.status();
+        if status == StatusCode::UNAUTHORIZED {
+            self.unauthorized
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         if status.is_success() {
             let text = resp.text().await?;
             let text = if text.trim().is_empty() {
@@ -140,8 +157,8 @@ impl Client {
 
     // ---- desktop auth (task.md §17) ----
 
-    /// POST /v1/desktop/auth/token — 未認証で叩く交換口。Client::new は
-    /// Bearer を付けるが code 自体が資格なので実害はない。
+    /// POST /v1/desktop/auth/token — use a Client with an empty token to omit
+    /// Authorization at this unauthenticated exchange endpoint.
     pub async fn exchange_desktop_code(
         &self,
         code: &str,
@@ -243,6 +260,11 @@ impl Client {
 
     // ---- tenants / projects ----
 
+    pub async fn get_me(&self) -> Result<types::UserResponse> {
+        let c = self.clone();
+        on_runtime(async move { c.send(Method::GET, &["v1", "auth", "me"], &[], None).await }).await
+    }
+
     pub async fn list_tenants(&self) -> Result<Vec<types::TenantListItemResponse>> {
         let c = self.clone();
         on_runtime(async move { c.send(Method::GET, &["v1", "tenants"], &[], None).await }).await
@@ -339,6 +361,37 @@ impl Client {
     }
 
     // ---- tasks ----
+
+    pub async fn search_tasks(
+        &self,
+        tenant: Uuid,
+        project: Uuid,
+        query: &str,
+    ) -> Result<types::SearchTasksResponse> {
+        let c = self.clone();
+        let query = vec![
+            ("q".into(), query.to_owned()),
+            ("limit".into(), "50".into()),
+        ];
+        on_runtime(async move {
+            c.send(
+                Method::GET,
+                &[
+                    "v1",
+                    "tenants",
+                    &tenant.to_string(),
+                    "projects",
+                    &project.to_string(),
+                    "tasks",
+                    "search",
+                ],
+                &query,
+                None,
+            )
+            .await
+        })
+        .await
+    }
 
     pub async fn list_my_tasks(
         &self,
@@ -718,8 +771,26 @@ impl Client {
         project: Uuid,
         body: &types::CreateReviewRequest,
     ) -> Result<types::ReviewDetailResponse> {
+        self.create_review_with_repository(tenant, project, body, None, None)
+            .await
+    }
+
+    pub async fn create_review_with_repository(
+        &self,
+        tenant: Uuid,
+        project: Uuid,
+        body: &types::CreateReviewRequest,
+        repo: Option<&str>,
+        host: Option<&str>,
+    ) -> Result<types::ReviewDetailResponse> {
         let c = self.clone();
-        let body = serde_json::to_value(body)?;
+        let mut body = serde_json::to_value(body)?;
+        if let Some(repo) = repo.filter(|s| !s.is_empty()) {
+            body["repo"] = serde_json::json!(repo);
+        }
+        if let Some(host) = host.filter(|s| !s.is_empty()) {
+            body["host"] = serde_json::json!(host);
+        }
         on_runtime(async move {
             c.send(
                 Method::POST,

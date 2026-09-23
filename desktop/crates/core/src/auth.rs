@@ -82,9 +82,18 @@ impl PendingAuth {
     pub fn wait_for_grant(self, timeout: Duration) -> Result<AuthGrant> {
         let deadline = Instant::now() + timeout;
         loop {
+            if Instant::now() >= deadline {
+                return Err(Error::AuthTimeout);
+            }
             match self.listener.accept() {
                 Ok((mut stream, _)) => {
-                    if let Some(result) = handle_connection(&mut stream, &self.state) {
+                    if let Some(result) = handle_connection_with_timeout(
+                        &mut stream,
+                        &self.state,
+                        deadline
+                            .saturating_duration_since(Instant::now())
+                            .min(Duration::from_secs(10)),
+                    ) {
                         return result.map(|code| AuthGrant {
                             code,
                             code_verifier: self.code_verifier,
@@ -106,20 +115,42 @@ impl PendingAuth {
 
 /// 1 接続を処理。`/callback` への GET なら `Some(Ok(code))`。
 /// ブラウザには成否を問わず応答を返す。
+#[cfg(test)]
 fn handle_connection(
     stream: &mut std::net::TcpStream,
     expected_state: &str,
 ) -> Option<Result<String>> {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .ok()?;
+    handle_connection_with_timeout(stream, expected_state, Duration::from_secs(10))
+}
 
-    let mut buf = vec![0u8; 8192];
-    let n = stream.read(&mut buf).ok()?;
-    let request = String::from_utf8_lossy(&buf[..n]);
+fn handle_connection_with_timeout(
+    stream: &mut std::net::TcpStream,
+    expected_state: &str,
+    timeout: Duration,
+) -> Option<Result<String>> {
+    let deadline = Instant::now() + timeout;
+    let mut buf = Vec::new();
+    while !buf.windows(2).any(|part| part == b"\r\n") {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() || buf.len() >= 8192 {
+            return None;
+        }
+        stream.set_read_timeout(Some(remaining)).ok()?;
+        let mut chunk = [0; 1024];
+        let n = stream.read(&mut chunk).ok()?;
+        if n == 0 {
+            return None;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+    let request = String::from_utf8_lossy(&buf);
     let request_line = request.lines().next()?;
     // "GET /callback?code=..&state=.. HTTP/1.1"
-    let path = request_line.split_whitespace().nth(1)?;
+    let mut fields = request_line.split_whitespace();
+    if fields.next()? != "GET" {
+        return None;
+    }
+    let path = fields.next()?;
 
     let parsed = url::Url::parse(&format!("http://localhost{path}")).ok()?;
     if parsed.path() != "/callback" {
@@ -138,14 +169,14 @@ fn handle_connection(
         }
     }
 
-    let (body, result) = if let Some(e) = error {
+    let (body, result) = if state.as_deref() != Some(expected_state) {
+        ("State mismatch.".to_string(), Err(Error::StateMismatch))
+    } else if let Some(e) = error {
         (
             "Authorization failed.".to_string(),
             Err(Error::AuthRejected(e)),
         )
-    } else if state.as_deref() != Some(expected_state) {
-        ("State mismatch.".to_string(), Err(Error::StateMismatch))
-    } else if let Some(code) = code {
+    } else if let Some(code) = code.filter(|c| !c.is_empty()) {
         ("Signed in. You can return to Koyori.".to_string(), Ok(code))
     } else {
         ("Missing code.".to_string(), Err(Error::MissingCode))
@@ -165,7 +196,7 @@ fn handle_connection(
 /// code を Device Token へ交換し、OS credential store へ保存する。
 /// 戻り値は保存した token。呼び出し側はログに出さないこと（§6）。
 pub async fn redeem(api_base: &str, grant: &AuthGrant) -> Result<String> {
-    // 交換口は未認証だが Client は Bearer を付ける（code 自体が資格、実害なし）
+    // The exchange endpoint is unauthenticated; no empty Bearer header is sent.
     let client = api::Client::new(api_base, "")?;
     let token = client
         .exchange_desktop_code(&grant.code, &grant.code_verifier)
@@ -238,6 +269,35 @@ mod tests {
             run_callback("GET /callback?error=access_denied&state=test-state HTTP/1.1\r\n\r\n")
                 .unwrap_err();
         assert!(matches!(err, Error::AuthRejected(ref e) if e == "access_denied"));
+    }
+
+    #[test]
+    fn error_callback_still_requires_matching_state() {
+        assert!(matches!(
+            run_callback("GET /callback?error=access_denied&state=wrong HTTP/1.1\r\n\r\n"),
+            Err(Error::StateMismatch)
+        ));
+    }
+
+    #[test]
+    fn empty_code_is_rejected() {
+        assert!(matches!(
+            run_callback("GET /callback?code=&state=test-state HTTP/1.1\r\n\r\n"),
+            Err(Error::MissingCode)
+        ));
+    }
+
+    #[test]
+    fn incomplete_request_cannot_extend_the_authorization_deadline() {
+        let pending = PendingAuth::start("https://task.koyori.app", "test").unwrap();
+        let address = pending.listener.local_addr().unwrap();
+        let mut peer = std::net::TcpStream::connect(address).unwrap();
+        peer.write_all(b"GET /callback?code=").unwrap();
+        let started = Instant::now();
+        let result = pending.wait_for_grant(Duration::from_millis(40));
+        assert!(matches!(result, Err(Error::AuthTimeout)));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(std::net::TcpStream::connect(address).is_err());
     }
 
     #[test]

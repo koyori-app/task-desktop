@@ -17,7 +17,7 @@ pub enum ApiError {
     #[error("bad request: {message}")]
     BadRequest { message: String },
     /// 通信障害（オフライン・DNS・TLS 等）— Connection Status と自動再試行。
-    #[error("transport error: {0}")]
+    #[error("Could not connect to the server. Check your connection and try again.")]
     Transport(#[from] reqwest::Error),
     /// 5xx など予期しないステータス。
     #[error("unexpected status {status}: {message}")]

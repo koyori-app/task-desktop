@@ -6,13 +6,25 @@ license.workspace = true
 [dependencies]
 thiserror = "2"
 keyring = "4.2.0"
-notify-rust = { version = "4.18.0", default-features = false }
+notify-rust = { version = "4.18.0", default-features = false, features = ["z"] }
 global-hotkey = "0.8.0"
 auto-launch = "0.6.0"
-tray-icon = "0.25.1"
-muda = "0.20.0"
+tray-icon = { version = "0.25.1", default-features = false }
+muda = { version = "0.20.0", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
 opener = "0.8.5"
+raw-window-handle = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 tauri-winrt-notification = "0.8.1"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Storage_Packaging_Appx"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSApplication", "NSDockTile"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Native D-Bus tray worker; GPUI does not run a GTK event loop.
+tray-icon = { version = "0.25.1", default-features = false, features = ["ksni"] }
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }

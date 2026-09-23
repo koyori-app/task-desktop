@@ -8,6 +8,7 @@ mod error;
 mod hotkey;
 mod notify;
 mod tray;
+mod window;
 
 pub use autolaunch::AutoLaunchHandle;
 pub use browser::open_url;
@@ -16,6 +17,7 @@ pub use error::{Error, Result};
 pub use hotkey::{GlobalHotKey, HotKeyHandle, HotKeyManager};
 pub use notify::{Notifier, OsNotification};
 pub use tray::{AppTray, TrayAction, poll_menu_event};
+pub use window::set_window_visible;
 
 /// Device Token を入れる credential store の service 名（desktop.md §6）。
 pub const CREDENTIAL_SERVICE: &str = "app.koyori.desktop";

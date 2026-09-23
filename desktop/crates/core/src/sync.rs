@@ -13,8 +13,6 @@ use crate::settings::NotificationPrefs;
 
 /// `limit` 既定（task.md §9.1）。
 const PAGE_LIMIT: u32 = 50;
-/// 無限ループ防止の catch-up ページ上限。
-const MAX_PAGES: u32 = 10;
 /// 見た id の記憶数（prod が cursor を返さない時期の重複抑止用）。
 const SEEN_CAPACITY: usize = 500;
 
@@ -54,6 +52,8 @@ pub struct NotificationEngine {
     /// prod（cursor 非対応）の間の重複抑止。cursor 対応後も害はない。
     seen: HashSet<uuid::Uuid>,
     seen_order: std::collections::VecDeque<uuid::Uuid>,
+    initialized: bool,
+    activation: Option<std::sync::Arc<dyn Fn(NotificationItem) + Send + Sync>>,
 }
 
 impl NotificationEngine {
@@ -63,17 +63,50 @@ impl NotificationEngine {
         notifier: platform::Notifier,
         saved_cursor: Option<String>,
     ) -> Self {
+        let initialized = saved_cursor.is_some();
         Self {
             client,
             notifier,
             last_cursor: saved_cursor,
             seen: HashSet::new(),
             seen_order: std::collections::VecDeque::new(),
+            initialized,
+            activation: None,
         }
     }
 
     pub fn last_cursor(&self) -> Option<&str> {
         self.last_cursor.as_deref()
+    }
+
+    /// OS callbacks run outside GPUI; send the item to the app's UI event queue.
+    pub fn on_activation(
+        mut self,
+        callback: impl Fn(NotificationItem) + Send + Sync + 'static,
+    ) -> Self {
+        self.activation = Some(std::sync::Arc::new(callback));
+        self
+    }
+
+    fn notify(&self, items: &[NotificationItem], prefs: &NotificationPrefs) -> usize {
+        items
+            .iter()
+            .filter(|item| {
+                if !enabled_for(prefs, &item.notification_type) {
+                    return false;
+                }
+                let content = toast(item);
+                if let Some(callback) = &self.activation {
+                    let callback = callback.clone();
+                    let item = (*item).clone();
+                    self.notifier
+                        .show_with_activation(&content, move || callback(item.clone()))
+                        .is_ok()
+                } else {
+                    self.notifier.show(&content).is_ok()
+                }
+            })
+            .count()
     }
 
     fn mark_seen(&mut self, id: uuid::Uuid) -> bool {
@@ -99,29 +132,66 @@ impl NotificationEngine {
     /// 通信障害は `Err(ApiError::Transport)` — Connection Status の扱い（§23）。
     pub async fn tick(&mut self, prefs: &NotificationPrefs) -> Result<TickOutcome, ApiError> {
         match &self.last_cursor {
-            None => self.baseline().await,
+            None => self.baseline(prefs).await,
             Some(cursor) => self.catch_up(cursor.clone(), prefs).await,
         }
     }
 
     /// 初回（カーソル無し）: 最新 1 ページで高水位だけ確立し、toast は出さない。
-    async fn baseline(&mut self) -> Result<TickOutcome, ApiError> {
+    /// 空の初回同期を終えた後は、新着の全ページを受信してから高水位を進める。
+    async fn baseline(&mut self, prefs: &NotificationPrefs) -> Result<TickOutcome, ApiError> {
         let page = self
             .fetch(&NotificationsQuery {
                 limit: Some(PAGE_LIMIT),
                 ..Default::default()
             })
             .await?;
-        for item in &page.notifications {
+        let baseline_only = !self.initialized;
+        let mut items = page.notifications;
+        let mut unread_count = page.unread_count;
+        let mut next_cursor = page.next_cursor;
+        let mut page_cursors = HashSet::new();
+        if !baseline_only {
+            while let Some(cursor) = next_cursor {
+                if !page_cursors.insert(cursor.clone()) {
+                    return Err(ApiError::InvalidConfig(
+                        "notification API repeated a page cursor".into(),
+                    ));
+                }
+                let page = self
+                    .fetch(&NotificationsQuery {
+                        limit: Some(PAGE_LIMIT),
+                        cursor: Some(cursor),
+                        ..Default::default()
+                    })
+                    .await?;
+                unread_count = page.unread_count;
+                let page_was_empty = page.notifications.is_empty();
+                items.extend(page.notifications);
+                next_cursor = if page_was_empty {
+                    None
+                } else {
+                    page.next_cursor
+                };
+            }
+        }
+        // No state is committed until all requested pages succeed, so a failed
+        // fetch retries the complete first batch instead of silently losing it.
+        self.initialized = true;
+        items.sort_by_key(|item| (item.created_at, item.id));
+        let mut ids = HashSet::new();
+        items.retain(|item| ids.insert(item.id));
+        for item in &items {
             self.mark_seen(item.id);
         }
-        // 先頭行が最新（DESC）。そこを高水位にする。
-        self.last_cursor = page.notifications.first().and_then(row_cursor);
+        self.last_cursor = items.last().and_then(row_cursor);
+        let new_items = if baseline_only { vec![] } else { items };
+        let notified = self.notify(&new_items, prefs);
         Ok(TickOutcome {
-            unread_count: page.unread_count,
-            new_items: vec![],
-            notified: 0,
-            baseline_only: true,
+            unread_count,
+            new_items,
+            notified,
+            baseline_only,
             last_cursor: self.last_cursor.clone(),
         })
     }
@@ -132,45 +202,50 @@ impl NotificationEngine {
         cursor: String,
         prefs: &NotificationPrefs,
     ) -> Result<TickOutcome, ApiError> {
-        let mut after = Some(cursor);
+        let mut after = cursor;
         let mut new_items: Vec<NotificationItem> = vec![];
-        let mut unread_count = 0i64;
+        let mut unread_count;
+        let mut page_cursors = HashSet::new();
+        let mut pending_ids = HashSet::new();
 
-        for _ in 0..MAX_PAGES {
+        loop {
+            if !page_cursors.insert(after.clone()) {
+                return Err(ApiError::InvalidConfig(
+                    "notification API repeated a catch-up cursor".into(),
+                ));
+            }
             let page = self
                 .fetch(&NotificationsQuery {
                     limit: Some(PAGE_LIMIT),
-                    after,
+                    after: Some(after.clone()),
                     ..Default::default()
                 })
                 .await?;
             unread_count = page.unread_count;
             let page_was_empty = page.notifications.is_empty();
             for item in page.notifications {
-                if self.mark_seen(item.id) {
+                // Commit seen IDs only after all pages succeeded. Otherwise a
+                // retry would silently discard the pages fetched before failure.
+                if !self.seen.contains(&item.id) && pending_ids.insert(item.id) {
                     new_items.push(item);
                 }
             }
             match page.next_cursor {
-                Some(next) if !page_was_empty => after = Some(next),
+                Some(next) if !page_was_empty => after = next,
                 _ => break,
             }
         }
 
+        new_items.sort_by_key(|item| (item.created_at, item.id));
+        for item in &new_items {
+            self.mark_seen(item.id);
+        }
         // 高水位 = 最後に受け取った（最新の）行のカーソル。
         if let Some(c) = new_items.last().and_then(row_cursor) {
             self.last_cursor = Some(c);
         }
 
-        let mut notified = 0;
-        for item in &new_items {
-            if enabled_for(prefs, &item.notification_type) {
-                // 通知失敗で同期自体は止めない（§23: 軽微なエラーは Toast 運用）。
-                if self.notifier.show(&toast(item)).is_ok() {
-                    notified += 1;
-                }
-            }
-        }
+        let notified = self.notify(&new_items, prefs);
 
         Ok(TickOutcome {
             unread_count,
@@ -179,5 +254,164 @@ impl NotificationEngine {
             baseline_only: false,
             last_cursor: self.last_cursor.clone(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    fn notification(number: u128) -> serde_json::Value {
+        serde_json::json!({"id": uuid::Uuid::from_u128(number), "notification_type": "assigned",
+            "created_at": "2026-09-24T00:00:00Z", "cursor": format!("c{number}")})
+    }
+
+    fn page(number: u128, next: Option<String>) -> serde_json::Value {
+        serde_json::json!({"notifications": [notification(number)], "unread_count": 12, "next_cursor": next})
+    }
+
+    fn scripted_server(
+        responses: Vec<(u16, serde_json::Value)>,
+    ) -> (api::Client, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = api::Client::new(
+            &format!("http://{}/api", listener.local_addr().unwrap()),
+            "dev",
+        )
+        .unwrap();
+        let server = std::thread::spawn(move || {
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                    .unwrap();
+                let mut buf = [0; 4096];
+                let read = stream.read(&mut buf).unwrap();
+                assert!(read > 0);
+                let body = body.to_string();
+                write!(stream, "HTTP/1.1 {status} Result\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+        });
+        (client, server)
+    }
+
+    fn prefs() -> NotificationPrefs {
+        NotificationPrefs {
+            enabled: false,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn retries_all_pages_after_partial_failure() {
+        let (client, server) = scripted_server(vec![
+            (200, page(1, Some("c1".into()))),
+            (500, serde_json::json!({"message": "temporary"})),
+            (200, page(1, Some("c1".into()))),
+            (200, page(2, None)),
+        ]);
+        let mut engine =
+            NotificationEngine::new(client, platform::Notifier::new("test"), Some("c0".into()));
+        assert!(engine.tick(&prefs()).await.is_err());
+        assert_eq!(engine.last_cursor(), Some("c0"));
+        let outcome = engine.tick(&prefs()).await.unwrap();
+        assert_eq!(outcome.new_items.len(), 2);
+        assert_eq!(outcome.last_cursor.as_deref(), Some("c2"));
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn drains_more_than_ten_pages() {
+        let (client, server) = scripted_server(
+            (1..=12)
+                .map(|n| (200, page(n, (n < 12).then(|| format!("c{n}")))))
+                .collect(),
+        );
+        let mut engine =
+            NotificationEngine::new(client, platform::Notifier::new("test"), Some("c0".into()));
+        assert_eq!(engine.tick(&prefs()).await.unwrap().new_items.len(), 12);
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn empty_initial_account_still_receives_its_first_notification() {
+        let (client, server) = scripted_server(vec![
+            (
+                200,
+                serde_json::json!({"notifications": [], "unread_count": 0}),
+            ),
+            (200, page(1, None)),
+        ]);
+        let mut engine = NotificationEngine::new(client, platform::Notifier::new("test"), None);
+        assert!(engine.tick(&prefs()).await.unwrap().baseline_only);
+        let next = engine.tick(&prefs()).await.unwrap();
+        assert!(!next.baseline_only);
+        assert_eq!(next.new_items.len(), 1);
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn empty_baseline_drains_the_entire_first_batch() {
+        let (client, server) = scripted_server(vec![
+            (
+                200,
+                serde_json::json!({"notifications": [], "unread_count": 0}),
+            ),
+            (200, page(3, Some("older-c3".into()))),
+            (
+                200,
+                serde_json::json!({"notifications": [notification(2), notification(1)], "unread_count": 3}),
+            ),
+        ]);
+        let mut engine = NotificationEngine::new(client, platform::Notifier::new("test"), None);
+        assert!(engine.tick(&prefs()).await.unwrap().baseline_only);
+        let outcome = engine.tick(&prefs()).await.unwrap();
+        assert_eq!(
+            outcome
+                .new_items
+                .iter()
+                .map(|n| n.id.as_u128())
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(outcome.last_cursor.as_deref(), Some("c3"));
+        assert_eq!(outcome.unread_count, 3);
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn existing_baseline_is_suppressed_and_sets_the_newest_cursor() {
+        let (client, server) = scripted_server(vec![
+            (
+                200,
+                serde_json::json!({"notifications": [notification(2), notification(1)], "unread_count": 2}),
+            ),
+            (200, page(3, None)),
+        ]);
+        let mut engine = NotificationEngine::new(client, platform::Notifier::new("test"), None);
+        let baseline = engine.tick(&prefs()).await.unwrap();
+        assert!(baseline.baseline_only);
+        assert!(baseline.new_items.is_empty());
+        assert_eq!(baseline.notified, 0);
+        assert_eq!(baseline.last_cursor.as_deref(), Some("c2"));
+        let next = engine.tick(&prefs()).await.unwrap();
+        assert_eq!(next.new_items.len(), 1);
+        assert_eq!(next.last_cursor.as_deref(), Some("c3"));
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn repeated_cursor_fails_without_advancing_or_marking_items_seen() {
+        let (client, server) = scripted_server(vec![(200, page(1, Some("c0".into())))]);
+        let mut engine =
+            NotificationEngine::new(client, platform::Notifier::new("test"), Some("c0".into()));
+        assert!(matches!(
+            engine.tick(&prefs()).await,
+            Err(ApiError::InvalidConfig(_))
+        ));
+        assert_eq!(engine.last_cursor(), Some("c0"));
+        assert!(engine.seen.is_empty());
+        server.join().unwrap();
     }
 }

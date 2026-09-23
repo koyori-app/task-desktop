@@ -90,6 +90,10 @@ pub struct SettingsStore {
 impl SettingsStore {
     /// 規定の設定ディレクトリ（Windows: %APPDATA%\koyori\Koyori 等）。
     pub fn default_location() -> Result<Self> {
+        // Keep mock sessions separate from the user's production preferences/cursor.
+        if let Some(path) = std::env::var_os("KOYORI_SETTINGS_PATH").filter(|p| !p.is_empty()) {
+            return Ok(Self::at(PathBuf::from(path)));
+        }
         let dirs = directories::ProjectDirs::from("app", "koyori", "Koyori")
             .ok_or_else(|| Error::InvalidConfig("cannot resolve config dir".into()))?;
         Ok(Self::at(dirs.config_dir().join(FILE_NAME)))

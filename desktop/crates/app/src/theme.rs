@@ -30,7 +30,7 @@ pub fn colors(cx: &App) -> KoyoriColors {
         text: c.foreground,
         text_muted: c.muted_foreground,
         border: c.border,
-        accent: c.accent,
+        accent: theme.primary,
         success: theme.success,
         warning: theme.warning,
         danger: theme.danger,
