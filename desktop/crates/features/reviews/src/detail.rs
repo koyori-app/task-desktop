@@ -158,7 +158,7 @@ fn gate_label(gate: Option<Gate>, t: &gpui_kit::component::Theme) -> Option<(Sha
 impl Render for ReviewDetailView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = Theme::global(cx).clone();
-        let c = t.semantic_tokens().colors.clone();
+        let c = t.semantic_tokens().colors;
 
         let Some(pr) = self.pr else {
             return div().id("review-detail-empty").size_full().p_4().child(

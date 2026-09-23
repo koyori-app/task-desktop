@@ -243,7 +243,7 @@ impl NotificationCenter {
     }
 
     fn row(&self, item: &NotificationItem, ix: usize, cx: &mut Context<Self>) -> impl IntoElement {
-        let c = Theme::global(cx).semantic_tokens().colors.clone();
+        let c = Theme::global(cx).semantic_tokens().colors;
         let unread = item.read_at.is_none();
         let text = core::notify_text::toast(item);
         let title: SharedString = text.title.into();
@@ -308,7 +308,7 @@ impl Render for NotificationCenter {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (c, danger) = {
             let theme = Theme::global(cx);
-            (theme.semantic_tokens().colors.clone(), theme.danger)
+            (theme.semantic_tokens().colors, theme.danger)
         };
 
         let mut list = div()

@@ -79,11 +79,10 @@ impl NotificationEngine {
     fn mark_seen(&mut self, id: uuid::Uuid) -> bool {
         if self.seen.insert(id) {
             self.seen_order.push_back(id);
-            if self.seen_order.len() > SEEN_CAPACITY {
-                if let Some(old) = self.seen_order.pop_front() {
+            if self.seen_order.len() > SEEN_CAPACITY
+                && let Some(old) = self.seen_order.pop_front() {
                     self.seen.remove(&old);
                 }
-            }
             true
         } else {
             false

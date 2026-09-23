@@ -62,11 +62,10 @@ impl SettingsView {
         // Launch at Login の実状態を OS 側から初期値に使う。
         let autolaunch = ::platform::AutoLaunchHandle::new("Koyori").ok();
         let mut settings = settings;
-        if let Some(h) = &autolaunch {
-            if let Ok(enabled) = h.is_enabled() {
+        if let Some(h) = &autolaunch
+            && let Ok(enabled) = h.is_enabled() {
                 settings.launch_at_login = enabled;
             }
-        }
 
         let this = Self {
             store,

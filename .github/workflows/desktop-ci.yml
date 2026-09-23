@@ -1,0 +1,60 @@
+name: Desktop CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop-ci.yml'
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop-ci.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: desktop
+
+jobs:
+  check:
+    name: fmt / clippy / test / build (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # toolchain は desktop/rust-toolchain.toml に一本化する。
+      # 引数なしの install が「アクティブな toolchain」= rust-toolchain.toml を読む。
+      - name: Install Rust
+        run: rustup toolchain install
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: desktop -> target
+          # キャッシュは main だけが書く。PR ごとに保存すると 10 GB の上限で
+          # main のキャッシュが追い出され、全ジョブがコールドビルドになる。
+          # PR は main のキャッシュを読むだけ。
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: fmt
+        run: cargo fmt --all -- --check
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: test
+        run: cargo test --workspace --lib
+
+      - name: build
+        run: cargo build --workspace

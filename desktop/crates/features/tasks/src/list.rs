@@ -246,8 +246,8 @@ impl TaskListView {
                 .and_then(|ss| ss.iter().find(|s| s.id == row.status_id))
                 .map(|s| s.is_done_state)
                 .unwrap_or(false);
-            if row.status_name.is_empty() {
-                if let Some(s) = self
+            if row.status_name.is_empty()
+                && let Some(s) = self
                     .statuses
                     .get(&row.project_id)
                     .and_then(|ss| ss.iter().find(|s| s.id == row.status_id))
@@ -255,7 +255,6 @@ impl TaskListView {
                     row.status_name = s.name.clone();
                     row.status_color = s.color.clone();
                 }
-            }
         }
     }
 
@@ -383,7 +382,7 @@ impl TaskListView {
     }
 
     fn row(&self, row: &TaskRow, ix: usize, cx: &mut Context<Self>) -> impl IntoElement {
-        let c = Theme::global(cx).semantic_tokens().colors.clone();
+        let c = Theme::global(cx).semantic_tokens().colors;
         let status_color = parse_hex_color(&row.status_color);
         let has_done = self.statuses.contains_key(&row.project_id);
         let due = row.due.as_ref().map(due_label);
@@ -477,7 +476,7 @@ impl Render for TaskListView {
         }
         let (c, danger) = {
             let t = Theme::global(cx);
-            (t.semantic_tokens().colors.clone(), t.danger)
+            (t.semantic_tokens().colors, t.danger)
         };
 
         let mut list = div()

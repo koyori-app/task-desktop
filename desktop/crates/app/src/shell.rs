@@ -125,6 +125,7 @@ pub struct AppShell {
 }
 
 impl AppShell {
+    #[allow(clippy::too_many_arguments)] // 起動時注入が多い。実引数は main 側だけ
     pub fn new(
         settings: core::Settings,
         settings_store: core::SettingsStore,

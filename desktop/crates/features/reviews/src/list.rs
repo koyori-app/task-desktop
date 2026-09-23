@@ -135,7 +135,7 @@ impl ReviewListView {
     fn row(&self, pr: &ReviewedPullRequest, ix: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let (c, danger, warn) = {
             let t = Theme::global(cx);
-            let cc = t.semantic_tokens().colors.clone();
+            let cc = t.semantic_tokens().colors;
             (cc, t.danger, t.warning)
         };
         let blocked = pr.blocking > 0;
@@ -208,7 +208,7 @@ impl Render for ReviewListView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (c, danger) = {
             let t = Theme::global(cx);
-            (t.semantic_tokens().colors.clone(), t.danger)
+            (t.semantic_tokens().colors, t.danger)
         };
 
         let mut list = div()

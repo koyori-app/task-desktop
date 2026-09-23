@@ -357,7 +357,7 @@ impl TaskDetailView {
         cx: &mut Context<Self>,
         on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
     ) -> Stateful<Div> {
-        let c = Theme::global(cx).semantic_tokens().colors.clone();
+        let c = Theme::global(cx).semantic_tokens().colors;
         div()
             .id(ElementId::Name(label.into()))
             .px_2()
@@ -379,7 +379,7 @@ impl Render for TaskDetailView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (c, danger) = {
             let t = Theme::global(cx);
-            (t.semantic_tokens().colors.clone(), t.danger)
+            (t.semantic_tokens().colors, t.danger)
         };
 
         let Some(detail) = self.detail.clone() else {
