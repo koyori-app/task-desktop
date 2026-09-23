@@ -220,7 +220,12 @@ dependencies = [
 name = "app"
 version = "0.0.0"
 dependencies = [
+ "api",
+ "core",
  "gpui-kit",
+ "platform",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]
