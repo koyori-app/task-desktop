@@ -55,8 +55,9 @@ fn main() {
                                 }
                             })
                             .detach();
-                        let shell =
-                            cx.new(|cx| AppShell::new(settings, settings_store, client, engine, cx));
+                        let shell = cx.new(|cx| {
+                            AppShell::new(settings, settings_store, client, engine, window, cx)
+                        });
                         cx.new(|cx| Root::new(shell, window, cx))
                     },
                 )

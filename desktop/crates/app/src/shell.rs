@@ -10,6 +10,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use feature_notifications::{CenterEvent, NavTarget, NotificationCenter};
+use feature_tasks::{ListMode, TaskDetailView, TaskListEvent, TaskListView};
 
 use crate::theme::{self, KoyoriColors};
 
@@ -49,6 +50,10 @@ pub struct AppShell {
     pub client: Option<api::Client>,
     /// §12 Notification Center。
     pub center: Entity<NotificationCenter>,
+    /// §15 Tasks 一覧（Content 側）。
+    pub task_list: Entity<TaskListView>,
+    /// §15 Task 詳細（Detail 側）。
+    pub task_detail: Entity<TaskDetailView>,
     pub route: Route,
     pub unread_count: i64,
     pub connection: ConnectionStatus,
@@ -65,6 +70,7 @@ impl AppShell {
         settings_store: core::SettingsStore,
         client: Option<api::Client>,
         engine: Option<core::NotificationEngine>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let center = cx.new(|_| NotificationCenter::new(client.clone()));
@@ -72,22 +78,76 @@ impl AppShell {
             let CenterEvent::Navigate(target) = ev;
             this.navigate_target(target.clone(), cx);
         });
+        let tenant = settings.last_tenant_id;
+        let task_list = cx.new(|cx| TaskListView::new(client.clone(), tenant, window, cx));
+        let task_detail =
+            cx.new(|cx| TaskDetailView::new(client.clone(), tenant, window, cx));
+        let sub2 = cx.subscribe(
+            &task_list,
+            |this, _list, ev: &TaskListEvent, cx| {
+                let TaskListEvent::Select { project, task } = ev;
+                this.task_detail
+                    .update(cx, |d, cx| d.open(*project, *task, cx));
+            },
+        );
 
         let mut this = Self {
             settings,
             settings_store,
-            client,
+            client: client.clone(),
             center,
+            task_list,
+            task_detail,
             route: Route::MyTasks,
             unread_count: 0,
             connection: ConnectionStatus::Online,
             tenants: vec![],
             projects: vec![],
             resizable: cx.new(|_| ResizableState::default()),
-            _subs: vec![sub],
+            _subs: vec![sub, sub2],
         };
         this.start_polling(engine, cx);
+        if let Some(client) = client {
+            this.bootstrap(client, cx);
+        }
         this
+    }
+
+    /// 起動時: tenant 解決（未設定なら先頭を保存）→ projects ロード →
+    /// task views にクライアントを渡して初期ロード。
+    fn bootstrap(&mut self, client: api::Client, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let tenants = client.list_tenants().await.unwrap_or_default();
+            let tenant = this
+                .update(cx, |s, cx| {
+                    s.tenants = tenants;
+                    if s.settings.last_tenant_id.is_none() {
+                        s.settings.last_tenant_id =
+                            s.tenants.first().map(|t| t.id);
+                        let _ = s.settings_store.save(&s.settings);
+                    }
+                    let tenant = s.settings.last_tenant_id;
+                    s.task_list.update(cx, |l, cx| {
+                        l.set_client(client.clone(), tenant, cx)
+                    });
+                    s.task_detail
+                        .update(cx, |d, _| d.set_client(client.clone(), tenant));
+                    cx.notify();
+                    tenant
+                })
+                .ok()
+                .flatten();
+            let Some(tenant) = tenant else {
+                return;
+            };
+            if let Ok(projects) = client.list_projects(tenant).await {
+                let _ = this.update(cx, |s, cx| {
+                    s.projects = projects;
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
     }
 
     /// §7/§10: 30 秒ごとに catch-up。エンジンはこのタスクが所有する
@@ -156,6 +216,28 @@ impl AppShell {
     }
 
     fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
+        match &route {
+            Route::MyTasks => self
+                .task_list
+                .update(cx, |l, cx| l.set_mode(ListMode::MyTasks, cx)),
+            Route::Today => self
+                .task_list
+                .update(cx, |l, cx| l.set_mode(ListMode::Today, cx)),
+            Route::Upcoming => self
+                .task_list
+                .update(cx, |l, cx| l.set_mode(ListMode::Upcoming, cx)),
+            Route::Project { id, label } => {
+                let key = label.clone();
+                self.task_list.update(cx, |l, cx| {
+                    l.set_mode(ListMode::Project { id: *id, key }, cx)
+                })
+            }
+            Route::TaskDetail { project, task } => {
+                let (p, t) = (*project, *task);
+                self.task_detail.update(cx, |d, cx| d.open(p, t, cx));
+            }
+            _ => {}
+        }
         self.route = route;
         cx.notify();
     }
@@ -292,19 +374,21 @@ impl AppShell {
     }
 
     fn content(&self, _colors: &KoyoriColors) -> impl IntoElement {
-        // feature crate の View が入る場所。Notifications は実装済み。
+        // feature crate の View が入る場所。
         if self.route == Route::Notifications {
             return div().flex_1().h_full().child(self.center.clone());
         }
+        // タスク系ルートは全て §15 の一覧を表示。
+        if matches!(
+            self.route,
+            Route::MyTasks | Route::Today | Route::Upcoming | Route::Project { .. } | Route::TaskDetail { .. }
+        ) {
+            return div().flex_1().h_full().child(self.task_list.clone());
+        }
         let title: SharedString = match &self.route {
-            Route::MyTasks => "My Tasks".into(),
-            Route::Today => "Today".into(),
-            Route::Upcoming => "Upcoming".into(),
-            Route::Notifications => unreachable!(),
-            Route::Project { label, .. } => label.clone().into(),
-            Route::TaskDetail { .. } => "Task".into(),
             Route::Reviews { .. } => "Reviews".into(),
             Route::Settings => "Settings".into(),
+            _ => "—".into(),
         };
         div()
             .flex_1()
@@ -314,6 +398,17 @@ impl AppShell {
     }
 
     fn detail(&self, colors: &KoyoriColors) -> impl IntoElement {
+        // タスク系ルートでは §15 Detail ペイン。
+        if matches!(
+            self.route,
+            Route::MyTasks | Route::Today | Route::Upcoming | Route::Project { .. } | Route::TaskDetail { .. }
+        ) {
+            return div()
+                .h_full()
+                .border_l_1()
+                .border_color(colors.border)
+                .child(self.task_detail.clone());
+        }
         div()
             .h_full()
             .p_4()
