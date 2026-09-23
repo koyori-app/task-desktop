@@ -17,6 +17,22 @@ fn main() {
         let settings = settings_store.load();
         theme::apply(settings.appearance, None, cx);
 
+        // §20/§22 キーバインド（settings.keybindings で上書き可）。
+        let palette_key = settings
+            .keybindings
+            .get("command_palette")
+            .cloned()
+            .unwrap_or_else(|| "ctrl-k".into());
+        let search_key = settings
+            .keybindings
+            .get("quick_search")
+            .cloned()
+            .unwrap_or_else(|| "ctrl-p".into());
+        cx.bind_keys([
+            KeyBinding::new(&palette_key, shell::OpenPalette, None),
+            KeyBinding::new(&search_key, shell::OpenQuickSearch, None),
+        ]);
+
         // Device Token があればクライアントと同期エンジンを用意する。
         // 無ければ未ログイン（認証画面の結線は別タスク）。
         let (client, engine) = match core::auth::load_token() {

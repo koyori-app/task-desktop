@@ -3,6 +3,8 @@
 
 use gpui_kit::component::badge::Badge;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::command::{Command, CommandItem, CommandState};
+use gpui_kit::component::{Icon, IndexPath};
 use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel};
 use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenuItem};
 use gpui_kit::assets::IconName;
@@ -17,6 +19,33 @@ use crate::theme::{self, KoyoriColors};
 
 /// §7: 通知ポーリング間隔。
 const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+// §20 Command Palette (Ctrl+K) / Quick Search (Ctrl+P)。
+actions!(shell, [OpenPalette, OpenQuickSearch]);
+
+/// パレットの 2 モード。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaletteKind {
+    Commands,
+    QuickSearch,
+}
+
+/// パレット項目が確定した時に実行する内部アクション。
+#[derive(Debug, Clone)]
+enum PaletteAct {
+    Navigate(Route),
+    OpenTask { project: uuid::Uuid, task: uuid::Uuid },
+    MarkAllRead,
+    RefreshTasks,
+}
+
+#[derive(Debug, Clone)]
+struct PaletteEntry {
+    label: SharedString,
+    icon: IconName,
+    keywords: Vec<SharedString>,
+    act: PaletteAct,
+}
 
 /// 画面内の遷移先。通知の `target` → 内部ルート変換（§11）は
 /// feature 側に実装される。
@@ -66,6 +95,10 @@ pub struct AppShell {
     pub projects: Vec<api::types::ProjectResponse>,
     /// Content / Detail の分割位置（§14: レイアウト状態はローカル保存）。
     pub resizable: Entity<ResizableState>,
+    /// §20 パレット。Some(kind) の間だけオーバーレイ表示。
+    palette: Option<PaletteKind>,
+    palette_state: Entity<CommandState>,
+    palette_entries: Vec<PaletteEntry>,
     _subs: Vec<Subscription>,
 }
 
@@ -121,6 +154,9 @@ impl AppShell {
             tenants: vec![],
             projects: vec![],
             resizable: cx.new(|_| ResizableState::default()),
+            palette: None,
+            palette_state: cx.new(|cx| CommandState::new(window, cx)),
+            palette_entries: vec![],
             _subs: vec![sub, sub2, sub3],
         };
         this.start_polling(engine, cx);
@@ -375,10 +411,8 @@ impl AppShell {
                 Button::new("search")
                     .ghost()
                     .icon(IconName::Search)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        // Quick Search は TASKDESKTO-10。検索 UI が来るまで
-                        // My Tasks へ戻すだけの仮導線。
-                        this.navigate(Route::MyTasks, cx)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_palette(PaletteKind::QuickSearch, window, cx)
                     })),
             )
             .child(
@@ -396,6 +430,177 @@ impl AppShell {
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.navigate(Route::Settings, cx)
                     })),
+            )
+    }
+
+    // ---- §20 Command Palette / Quick Search ----
+
+    fn toggle_palette(&mut self, kind: PaletteKind, window: &mut Window, cx: &mut Context<Self>) {
+        if self.palette == Some(kind) {
+            self.close_palette(cx);
+            return;
+        }
+        self.palette_entries = self.build_entries(kind, cx);
+        self.palette = Some(kind);
+        self.palette_state
+            .update(cx, |s, cx| s.set_query("", window, cx));
+        let focus = self.palette_state.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    fn close_palette(&mut self, cx: &mut Context<Self>) {
+        self.palette = None;
+        self.palette_entries.clear();
+        cx.notify();
+    }
+
+    fn build_entries(&self, kind: PaletteKind, cx: &mut Context<Self>) -> Vec<PaletteEntry> {
+        let mut v = vec![];
+        let nav = |label: &'static str, icon: IconName, route: Route| PaletteEntry {
+            label: label.into(),
+            icon,
+            keywords: vec![],
+            act: PaletteAct::Navigate(route),
+        };
+        match kind {
+            PaletteKind::Commands => {
+                v.push(nav("Go to My Tasks", IconName::ListTodo, Route::MyTasks));
+                v.push(nav("Go to Today", IconName::Calendar, Route::Today));
+                v.push(nav("Go to Upcoming", IconName::Calendar, Route::Upcoming));
+                v.push(nav("Go to Notifications", IconName::Bell, Route::Notifications));
+                v.push(nav("Go to Settings", IconName::Settings, Route::Settings));
+                for p in &self.projects {
+                    v.push(PaletteEntry {
+                        label: format!("{}: Tasks", p.key).into(),
+                        icon: IconName::Folder,
+                        keywords: vec![p.key.clone().into()],
+                        act: PaletteAct::Navigate(Route::Project {
+                            id: p.id,
+                            label: p.key.clone(),
+                        }),
+                    });
+                    v.push(PaletteEntry {
+                        label: format!("{}: Reviews", p.key).into(),
+                        icon: IconName::SquareCheck,
+                        keywords: vec![p.key.clone().into()],
+                        act: PaletteAct::Navigate(Route::Reviews { project: p.id }),
+                    });
+                }
+                v.push(PaletteEntry {
+                    label: "Mark all notifications read".into(),
+                    icon: IconName::Check,
+                    keywords: vec![],
+                    act: PaletteAct::MarkAllRead,
+                });
+                v.push(PaletteEntry {
+                    label: "Refresh tasks".into(),
+                    icon: IconName::RefreshCcwDot,
+                    keywords: vec![],
+                    act: PaletteAct::RefreshTasks,
+                });
+            }
+            PaletteKind::QuickSearch => {
+                for r in self.task_list.read(cx).rows_snapshot() {
+                    let label = format!("{} {}", r.seq_key, r.title);
+                    v.push(PaletteEntry {
+                        label: label.clone().into(),
+                        icon: IconName::ClipboardList,
+                        keywords: vec![
+                            r.seq_key.clone().into(),
+                            r.title.clone().into(),
+                        ],
+                        act: PaletteAct::OpenTask {
+                            project: r.project_id,
+                            task: r.id,
+                        },
+                    });
+                }
+                for p in &self.projects {
+                    v.push(PaletteEntry {
+                        label: format!("{} — {}", p.key, p.name).into(),
+                        icon: IconName::Folder,
+                        keywords: vec![p.key.clone().into(), p.name.clone().into()],
+                        act: PaletteAct::Navigate(Route::Project {
+                            id: p.id,
+                            label: p.key.clone(),
+                        }),
+                    });
+                }
+            }
+        }
+        v
+    }
+
+    fn palette_confirm(&mut self, path: IndexPath, cx: &mut Context<Self>) {
+        let Some(entry) = self.palette_entries.get(path.row).cloned() else {
+            self.close_palette(cx);
+            return;
+        };
+        match entry.act {
+            PaletteAct::Navigate(route) => self.navigate(route, cx),
+            PaletteAct::OpenTask { project, task } => {
+                self.navigate(Route::TaskDetail { project, task }, cx)
+            }
+            PaletteAct::MarkAllRead => {
+                self.center.update(cx, |c, cx| c.mark_all_read(cx))
+            }
+            PaletteAct::RefreshTasks => {
+                self.task_list.update(cx, |l, cx| l.reload(cx))
+            }
+        }
+        self.close_palette(cx);
+    }
+
+    fn palette_overlay(&self, kind: PaletteKind, cx: &mut Context<Self>) -> impl IntoElement {
+        let weak = cx.entity().downgrade();
+        let items: Vec<CommandItem> = self
+            .palette_entries
+            .iter()
+            .map(|e| {
+                CommandItem::new()
+                    .label(e.label.clone())
+                    .icon(Icon::new(e.icon))
+                    .keywords(e.keywords.clone())
+            })
+            .collect();
+        let placeholder = match kind {
+            PaletteKind::Commands => "Type a command…",
+            PaletteKind::QuickSearch => "Jump to a task or project…",
+        };
+        let weak2 = weak.clone();
+        div()
+            .id("palette-backdrop")
+            .absolute()
+            .inset_0()
+            .flex()
+            .justify_center()
+            .pt(px(120.))
+            .bg(hsla(0.0, 0.0, 0.0, 0.45))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.close_palette(cx)),
+            )
+            .child(
+                div()
+                    .w(px(560.))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation()
+                    })
+                    .child(
+                        Command::new(&self.palette_state)
+                            .items(items)
+                            .placeholder(placeholder)
+                            .max_h(px(420.))
+                            .on_cancel(move |_, cx| {
+                                let _ = weak2.update(cx, |this, cx| this.close_palette(cx));
+                            })
+                            .on_confirm(move |path, _, cx| {
+                                let _ = weak.update(cx, |this, cx| {
+                                    this.palette_confirm(path, cx)
+                                });
+                            }),
+                    ),
             )
     }
 
@@ -526,12 +731,25 @@ impl AppShell {
 impl Render for AppShell {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = theme::colors(cx);
+        let weak_palette = cx.entity().downgrade();
+        let weak_search = weak_palette.clone();
         div()
+            .id("shell-root")
             .flex()
             .flex_col()
             .size_full()
             .bg(colors.background)
             .text_color(colors.text)
+            .on_action::<OpenPalette>(move |_, window, cx| {
+                let _ = weak_palette.update(cx, |this, cx| {
+                    this.toggle_palette(PaletteKind::Commands, window, cx)
+                });
+            })
+            .on_action::<OpenQuickSearch>(move |_, window, cx| {
+                let _ = weak_search.update(cx, |this, cx| {
+                    this.toggle_palette(PaletteKind::QuickSearch, window, cx)
+                });
+            })
             .child(self.header(&colors, cx))
             .child(
                 div()
@@ -573,5 +791,8 @@ impl Render for AppShell {
                         ),
                     ),
             )
+            .when_some(self.palette, |d, kind| {
+                d.child(self.palette_overlay(kind, cx))
+            })
     }
 }

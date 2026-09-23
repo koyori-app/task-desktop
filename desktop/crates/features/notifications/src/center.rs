@@ -184,7 +184,8 @@ impl NotificationCenter {
         self.refresh(cx);
     }
 
-    fn mark_all_read(&mut self, cx: &mut Context<Self>) {
+    /// §12 "Mark all read"。パレットからも呼ぶので pub。
+    pub fn mark_all_read(&mut self, cx: &mut Context<Self>) {
         let now = Utc::now();
         for item in &mut self.items {
             if item.read_at.is_none() {

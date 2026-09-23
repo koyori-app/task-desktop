@@ -90,6 +90,11 @@ impl TaskListView {
         self.reload(cx);
     }
 
+    /// Quick Search (§20) 用に現在ロード済みの行を返す。
+    pub fn rows_snapshot(&self) -> Vec<TaskRow> {
+        self.rows.clone()
+    }
+
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         let (Some(client), Some(tenant)) = (self.client.clone(), self.tenant) else {
             return;
