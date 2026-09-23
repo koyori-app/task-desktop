@@ -7,6 +7,12 @@ https://github.com/koyori-app/task
 
 docs配下の仕様書を読むこと。その際task.mdは現在実装中であるためdesktop.mdの内容を実装する際に実装しないこと。それをTaskCLIでタスク化して後で再開できるようにすることが求められる。
 
+## Git
+
+- コミットメッセージに `Co-Authored-By` トレーラーを付けない
+- GPG 署名は不要（`git -c commit.gpgsign=false commit`）
+- 適宜コミットして進める。日本語の Conventional Commits
+
 ## 環境
 
 - Cargo ワークスペースは `desktop/`。ビルド: `cargo build -p app`、実行: `cargo run -p app`（`target/debug/koyori.exe`）
