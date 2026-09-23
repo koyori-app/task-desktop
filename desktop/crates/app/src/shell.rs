@@ -41,6 +41,7 @@ enum PaletteAct {
         project: uuid::Uuid,
         task: uuid::Uuid,
     },
+    SwitchTenant(uuid::Uuid),
     MarkAllRead,
     RefreshTasks,
 }
@@ -117,6 +118,9 @@ pub struct AppShell {
     keep_running: std::rc::Rc<std::cell::Cell<bool>>,
     /// Tray からの再表示に使う Window ハンドル。
     window_handle: AnyWindowHandle,
+    /// §6: ブラウザ承認待ちの間 true（Login 画面の状態表示用）。
+    auth_waiting: bool,
+    auth_error: Option<SharedString>,
     /// §20 パレット。Some(kind) の間だけオーバーレイ表示。
     palette: Option<PaletteKind>,
     palette_state: Entity<CommandState>,
@@ -208,6 +212,8 @@ impl AppShell {
             tray,
             keep_running,
             window_handle: window.window_handle(),
+            auth_waiting: false,
+            auth_error: None,
             palette: None,
             palette_state: cx.new(|cx| CommandState::new(window, cx)),
             palette_entries: vec![],
@@ -258,6 +264,84 @@ impl AppShell {
             }
         })
         .detach();
+    }
+
+    // ---- §6 Device Token ログイン ----
+
+    /// Sign in ボタン: authorize URL をブラウザで開き、loopback callback を
+    /// 別スレッドで待つ（blocking のため executor を塞がない）。
+    fn begin_login(&mut self, cx: &mut Context<Self>) {
+        let pending = match core::auth::PendingAuth::start(
+            &self.settings.web_base,
+            &core::auth::default_device_name(),
+        ) {
+            Ok(p) => p,
+            Err(_) => {
+                self.auth_error = Some("Failed to start authorization".into());
+                cx.notify();
+                return;
+            }
+        };
+        if ::platform::open_url(pending.authorize_url()).is_err() {
+            self.auth_error = Some("Failed to open browser".into());
+            cx.notify();
+            return;
+        }
+        self.auth_waiting = true;
+        self.auth_error = None;
+        cx.notify();
+
+        let api_base = self.settings.api_base.clone();
+        let (tx, rx) = futures::channel::oneshot::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(pending.wait_for_grant(std::time::Duration::from_secs(300)));
+        });
+        cx.spawn(async move |this, cx| {
+            let grant = rx.await.ok().and_then(|r| r.ok());
+            let client = match grant {
+                Some(grant) => match core::auth::redeem(&api_base, &grant).await {
+                    Ok(token) => api::Client::new(&api_base, &token).ok(),
+                    Err(_) => None,
+                },
+                None => None,
+            };
+            let _ = this.update(cx, |s, cx| match client {
+                Some(client) => s.complete_login(client, cx),
+                None => {
+                    s.auth_waiting = false;
+                    s.auth_error = Some("Sign-in failed or timed out".into());
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// ログイン完了: client/engine を生成し全 view に結線する。
+    fn complete_login(&mut self, client: api::Client, cx: &mut Context<Self>) {
+        self.client = Some(client.clone());
+        self.auth_waiting = false;
+        let tenant = self.settings.last_tenant_id;
+        self.center
+            .update(cx, |c, cx| c.set_client(client.clone(), cx));
+        self.task_list
+            .update(cx, |l, cx| l.set_client(client.clone(), tenant, cx));
+        self.task_detail
+            .update(cx, |d, _| d.set_client(client.clone(), tenant));
+        self.review_list
+            .update(cx, |l, _| l.set_client(client.clone(), tenant));
+        self.review_detail
+            .update(cx, |d, _| d.set_client(client.clone(), tenant));
+        self.settings_view
+            .update(cx, |v, cx| v.set_client(client.clone(), cx));
+        let engine = core::NotificationEngine::new(
+            client.clone(),
+            ::platform::Notifier::new(::platform::WINDOWS_AUMID),
+            self.settings.notification_cursor.clone(),
+        );
+        self.start_polling(Some(engine), cx);
+        self.bootstrap(client, cx);
+        cx.notify();
     }
 
     /// §7/§10: 30 秒ごとに catch-up。エンジンはこのタスクが所有する
@@ -597,6 +681,17 @@ impl AppShell {
                     keywords: vec![],
                     act: PaletteAct::MarkAllRead,
                 });
+                // §19: Switch Tenant（複数 tenant がある時だけ出す）。
+                if self.tenants.len() > 1 {
+                    for t in &self.tenants {
+                        v.push(PaletteEntry {
+                            label: format!("Switch to {}", t.name).into(),
+                            icon: IconName::Users,
+                            keywords: vec!["tenant".into(), t.name.clone().into()],
+                            act: PaletteAct::SwitchTenant(t.id),
+                        });
+                    }
+                }
                 v.push(PaletteEntry {
                     label: "Refresh tasks".into(),
                     icon: IconName::RefreshCcwDot,
@@ -643,10 +738,29 @@ impl AppShell {
             PaletteAct::OpenTask { project, task } => {
                 self.navigate(Route::TaskDetail { project, task }, cx)
             }
+            PaletteAct::SwitchTenant(id) => self.switch_tenant(id, cx),
             PaletteAct::MarkAllRead => self.center.update(cx, |c, cx| c.mark_all_read(cx)),
             PaletteAct::RefreshTasks => self.task_list.update(cx, |l, cx| l.reload(cx)),
         }
         self.close_palette(cx);
+    }
+
+    /// 選択 tenant を切り替えて全 view を再ロードする（§19 Switch Tenant）。
+    fn switch_tenant(&mut self, id: uuid::Uuid, cx: &mut Context<Self>) {
+        self.settings.last_tenant_id = Some(id);
+        let _ = self.settings_store.save(&self.settings);
+        if let Some(client) = self.client.clone() {
+            let tenant = Some(id);
+            self.task_list
+                .update(cx, |l, cx| l.set_client(client.clone(), tenant, cx));
+            self.task_detail
+                .update(cx, |d, _| d.set_client(client.clone(), tenant));
+            self.review_list
+                .update(cx, |l, _| l.set_client(client.clone(), tenant));
+            self.review_detail
+                .update(cx, |d, _| d.set_client(client.clone(), tenant));
+        }
+        self.navigate(Route::MyTasks, cx);
     }
 
     fn palette_overlay(&self, kind: PaletteKind, cx: &mut Context<Self>) -> impl IntoElement {
@@ -820,6 +934,53 @@ impl AppShell {
             )
     }
 
+    /// §6 未ログイン画面。client が無い時は shell 全体の代わりに出す。
+    fn login_view(&self, colors: &KoyoriColors, cx: &mut Context<Self>) -> impl IntoElement {
+        let waiting = self.auth_waiting;
+        div()
+            .flex_1()
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_4()
+                    .w(px(360.))
+                    .child(
+                        div()
+                            .text_2xl()
+                            .font_weight(FontWeight::BOLD)
+                            .child("Koyori"),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(colors.text_muted)
+                            .child("Sign in with your Koyori account"),
+                    )
+                    .child(
+                        Button::new("signin")
+                            .primary()
+                            .icon(Icon::new(IconName::LogIn))
+                            .label(if waiting {
+                                "Waiting for browser…"
+                            } else {
+                                "Sign in with Koyori"
+                            })
+                            .when(!waiting, |b| {
+                                b.on_click(cx.listener(|this, _, _, cx| this.begin_login(cx)))
+                            }),
+                    )
+                    .when_some(self.auth_error.clone(), |d, e| {
+                        d.child(div().text_sm().text_color(colors.danger).child(e))
+                    }),
+            )
+    }
+
     /// §14: 分割位置はローカル設定に保存して次回復元する。
     fn detail_width(&self) -> Pixels {
         self.settings
@@ -853,42 +1014,49 @@ impl Render for AppShell {
                     this.toggle_palette(PaletteKind::QuickSearch, window, cx)
                 });
             })
-            .child(self.header(&colors, cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_1()
-                    .min_h_0()
-                    .child(self.sidebar(&colors, cx))
-                    .child(
-                        div().flex_1().min_w_0().child(
-                            h_resizable("content-detail")
-                                .with_state(&self.resizable)
-                                .on_resize({
-                                    let shell = cx.entity();
-                                    move |state, _, cx| {
-                                        if let Some(w) = state.read(cx).sizes().last().copied() {
-                                            shell.update(cx, |this, _| {
-                                                this.settings.window_layout =
-                                                    Some(serde_json::json!({
-                                                        "detail_width": f64::from(w)
-                                                    }));
-                                                let _ = this.settings_store.save(&this.settings);
-                                            });
+            .when(self.client.is_none(), |d| {
+                d.child(self.login_view(&colors, cx))
+            })
+            .when(self.client.is_some(), |d| d.child(self.header(&colors, cx)))
+            .when(self.client.is_some(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_1()
+                        .min_h_0()
+                        .child(self.sidebar(&colors, cx))
+                        .child(
+                            div().flex_1().min_w_0().child(
+                                h_resizable("content-detail")
+                                    .with_state(&self.resizable)
+                                    .on_resize({
+                                        let shell = cx.entity();
+                                        move |state, _, cx| {
+                                            if let Some(w) = state.read(cx).sizes().last().copied()
+                                            {
+                                                shell.update(cx, |this, _| {
+                                                    this.settings.window_layout =
+                                                        Some(serde_json::json!({
+                                                            "detail_width": f64::from(w)
+                                                        }));
+                                                    let _ =
+                                                        this.settings_store.save(&this.settings);
+                                                });
+                                            }
                                         }
-                                    }
-                                })
-                                .child(resizable_panel().child(self.content(&colors, cx)))
-                                .child(
-                                    resizable_panel()
-                                        .size(self.detail_width())
-                                        .size_range(px(280.)..px(560.))
-                                        .child(self.detail(&colors)),
-                                ),
+                                    })
+                                    .child(resizable_panel().child(self.content(&colors, cx)))
+                                    .child(
+                                        resizable_panel()
+                                            .size(self.detail_width())
+                                            .size_range(px(280.)..px(560.))
+                                            .child(self.detail(&colors)),
+                                    ),
+                            ),
                         ),
-                    ),
-            )
+                )
+            })
             .when_some(self.palette, |d, kind| {
                 d.child(self.palette_overlay(kind, cx))
             })

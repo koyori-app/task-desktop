@@ -251,10 +251,10 @@ impl TaskListView {
                     .statuses
                     .get(&row.project_id)
                     .and_then(|ss| ss.iter().find(|s| s.id == row.status_id))
-                {
-                    row.status_name = s.name.clone();
-                    row.status_color = s.color.clone();
-                }
+            {
+                row.status_name = s.name.clone();
+                row.status_color = s.color.clone();
+            }
         }
     }
 

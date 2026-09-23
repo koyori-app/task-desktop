@@ -175,6 +175,14 @@ pub async fn redeem(api_base: &str, grant: &AuthGrant) -> Result<String> {
     Ok(token.token)
 }
 
+/// この端末が authorize 時に使う device 名（§17 の端末管理に出る名前）。
+/// devices 一覧から自分を突き合わせる時にも同じ規則を使う。
+pub fn default_device_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "desktop".into())
+}
+
 /// 保存済み Device Token を読む。未ログインは `Ok(None)`。
 pub fn load_token() -> Result<Option<String>> {
     Ok(platform::CredentialStore::new(platform::CREDENTIAL_SERVICE)

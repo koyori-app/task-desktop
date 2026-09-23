@@ -23,12 +23,9 @@ pub enum SettingsEvent {
 const KEY_PALETTE: &str = "command_palette";
 const KEY_SEARCH: &str = "quick_search";
 
-/// この端末が auth 時に使った device 名。`PendingAuth::start` に渡す
-/// 名前と同じ規則で、devices 一覧から自分を突き合わせる（§17）。
+/// devices 一覧から自分を突き合わせる device 名（core::auth と同一規則）。
 fn device_name() -> String {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "desktop".into())
+    core::auth::default_device_name()
 }
 
 pub struct SettingsView {
@@ -63,9 +60,10 @@ impl SettingsView {
         let autolaunch = ::platform::AutoLaunchHandle::new("Koyori").ok();
         let mut settings = settings;
         if let Some(h) = &autolaunch
-            && let Ok(enabled) = h.is_enabled() {
-                settings.launch_at_login = enabled;
-            }
+            && let Ok(enabled) = h.is_enabled()
+        {
+            settings.launch_at_login = enabled;
+        }
 
         let this = Self {
             store,
@@ -81,6 +79,12 @@ impl SettingsView {
             this.refresh_devices(&client, cx);
         }
         this
+    }
+
+    /// ログイン後にクライアントが出来た時に差し替えて devices を再取得。
+    pub fn set_client(&mut self, client: api::Client, cx: &mut Context<Self>) {
+        self.client = Some(client.clone());
+        self.refresh_devices(&client, cx);
     }
 
     /// 設定を変更 → 保存 → app へ通知。

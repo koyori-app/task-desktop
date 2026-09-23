@@ -226,6 +226,7 @@ dependencies = [
  "feature-reviews",
  "feature-settings",
  "feature-tasks",
+ "futures",
  "gpui-kit",
  "platform",
  "serde_json",
