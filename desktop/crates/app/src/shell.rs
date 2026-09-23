@@ -10,6 +10,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use feature_notifications::{CenterEvent, NavTarget, NotificationCenter};
+use feature_reviews::{ReviewDetailView, ReviewListEvent, ReviewListView};
 use feature_tasks::{ListMode, TaskDetailView, TaskListEvent, TaskListView};
 
 use crate::theme::{self, KoyoriColors};
@@ -54,6 +55,10 @@ pub struct AppShell {
     pub task_list: Entity<TaskListView>,
     /// §15 Task 詳細（Detail 側）。
     pub task_detail: Entity<TaskDetailView>,
+    /// §16 PR 一覧（Content 側）。
+    pub review_list: Entity<ReviewListView>,
+    /// §17-18 Review 詳細（Detail 側）。
+    pub review_detail: Entity<ReviewDetailView>,
     pub route: Route,
     pub unread_count: i64,
     pub connection: ConnectionStatus,
@@ -90,6 +95,16 @@ impl AppShell {
                     .update(cx, |d, cx| d.open(*project, *task, cx));
             },
         );
+        let review_list = cx.new(|cx| ReviewListView::new(client.clone(), tenant, window, cx));
+        let review_detail = cx.new(|_| ReviewDetailView::new(client.clone(), tenant));
+        let sub3 = cx.subscribe(
+            &review_list,
+            |this, _list, ev: &ReviewListEvent, cx| {
+                let ReviewListEvent::Select { pr, title } = ev;
+                this.review_detail
+                    .update(cx, |d, cx| d.open(*pr, title.clone(), cx));
+            },
+        );
 
         let mut this = Self {
             settings,
@@ -98,13 +113,15 @@ impl AppShell {
             center,
             task_list,
             task_detail,
+            review_list,
+            review_detail,
             route: Route::MyTasks,
             unread_count: 0,
             connection: ConnectionStatus::Online,
             tenants: vec![],
             projects: vec![],
             resizable: cx.new(|_| ResizableState::default()),
-            _subs: vec![sub, sub2],
+            _subs: vec![sub, sub2, sub3],
         };
         this.start_polling(engine, cx);
         if let Some(client) = client {
@@ -131,6 +148,10 @@ impl AppShell {
                         l.set_client(client.clone(), tenant, cx)
                     });
                     s.task_detail
+                        .update(cx, |d, _| d.set_client(client.clone(), tenant));
+                    s.review_list
+                        .update(cx, |l, _| l.set_client(client.clone(), tenant));
+                    s.review_detail
                         .update(cx, |d, _| d.set_client(client.clone(), tenant));
                     cx.notify();
                     tenant
@@ -235,6 +256,11 @@ impl AppShell {
             Route::TaskDetail { project, task } => {
                 let (p, t) = (*project, *task);
                 self.task_detail.update(cx, |d, cx| d.open(p, t, cx));
+            }
+            Route::Reviews { project } => {
+                let p = *project;
+                self.review_list.update(cx, |l, cx| l.set_project(p, cx));
+                self.review_detail.update(cx, |d, _| d.set_project(p));
             }
             _ => {}
         }
@@ -373,7 +399,40 @@ impl AppShell {
             )
     }
 
-    fn content(&self, _colors: &KoyoriColors) -> impl IntoElement {
+    /// プロジェクト配下の Tasks/Reviews タブ（§14）。
+    fn project_tabs(
+        &self,
+        project: uuid::Uuid,
+        key: String,
+        tasks_active: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let colors = theme::colors(cx);
+        let mk = |label: &'static str, active: bool, route: Route| {
+            Button::new(SharedString::from(format!("ptab-{label}")))
+                .ghost()
+                .label(label)
+                .when(active, |b| b.text_color(colors.accent))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.navigate(route.clone(), cx)
+                }))
+        };
+        div()
+            .flex()
+            .flex_row()
+            .gap_2()
+            .px_4()
+            .py_1()
+            .border_b_1()
+            .border_color(colors.border)
+            .child(mk("Tasks", tasks_active, Route::Project {
+                id: project,
+                label: key,
+            }))
+            .child(mk("Reviews", !tasks_active, Route::Reviews { project }))
+    }
+
+    fn content(&self, _colors: &KoyoriColors, cx: &mut Context<Self>) -> impl IntoElement {
         // feature crate の View が入る場所。
         if self.route == Route::Notifications {
             return div().flex_1().h_full().child(self.center.clone());
@@ -381,12 +440,36 @@ impl AppShell {
         // タスク系ルートは全て §15 の一覧を表示。
         if matches!(
             self.route,
-            Route::MyTasks | Route::Today | Route::Upcoming | Route::Project { .. } | Route::TaskDetail { .. }
+            Route::MyTasks | Route::Today | Route::Upcoming | Route::TaskDetail { .. }
         ) {
             return div().flex_1().h_full().child(self.task_list.clone());
         }
+        // プロジェクト配下は Tasks/Reviews のタブ切替（§14）。
+        if let Route::Project { id, label } = &self.route {
+            return div()
+                .flex_1()
+                .h_full()
+                .flex()
+                .flex_col()
+                .child(self.project_tabs(*id, label.clone(), true, cx))
+                .child(div().flex_1().min_h_0().child(self.task_list.clone()));
+        }
+        if let Route::Reviews { project } = &self.route {
+            let key = self
+                .projects
+                .iter()
+                .find(|p| p.id == *project)
+                .map(|p| p.key.clone())
+                .unwrap_or_else(|| "Project".into());
+            return div()
+                .flex_1()
+                .h_full()
+                .flex()
+                .flex_col()
+                .child(self.project_tabs(*project, key, false, cx))
+                .child(div().flex_1().min_h_0().child(self.review_list.clone()));
+        }
         let title: SharedString = match &self.route {
-            Route::Reviews { .. } => "Reviews".into(),
             Route::Settings => "Settings".into(),
             _ => "—".into(),
         };
@@ -408,6 +491,13 @@ impl AppShell {
                 .border_l_1()
                 .border_color(colors.border)
                 .child(self.task_detail.clone());
+        }
+        if matches!(self.route, Route::Reviews { .. }) {
+            return div()
+                .h_full()
+                .border_l_1()
+                .border_color(colors.border)
+                .child(self.review_detail.clone());
         }
         div()
             .h_full()
@@ -473,7 +563,7 @@ impl Render for AppShell {
                                         }
                                     }
                                 })
-                                .child(resizable_panel().child(self.content(&colors)))
+                                .child(resizable_panel().child(self.content(&colors, cx)))
                                 .child(
                                     resizable_panel()
                                         .size(self.detail_width())

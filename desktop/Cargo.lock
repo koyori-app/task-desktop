@@ -223,6 +223,7 @@ dependencies = [
  "api",
  "core",
  "feature-notifications",
+ "feature-reviews",
  "feature-tasks",
  "gpui-kit",
  "platform",
@@ -1977,6 +1978,14 @@ version = "0.0.0"
 [[package]]
 name = "feature-reviews"
 version = "0.0.0"
+dependencies = [
+ "api",
+ "chrono",
+ "core",
+ "gpui-kit",
+ "serde_json",
+ "uuid",
+]
 
 [[package]]
 name = "feature-search"
