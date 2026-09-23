@@ -118,6 +118,9 @@ pub struct AppShell {
     keep_running: std::rc::Rc<std::cell::Cell<bool>>,
     /// Tray からの再表示に使う Window ハンドル。
     window_handle: AnyWindowHandle,
+    /// ポーリングタスクが borrow せず読む通知設定（§10）。
+    /// Entity borrow は hot loop から外す（RefCell already borrowed 回避）。
+    notif_prefs: std::rc::Rc<std::cell::RefCell<core::settings::NotificationPrefs>>,
     /// §6: ブラウザ承認待ちの間 true（Login 画面の状態表示用）。
     auth_waiting: bool,
     auth_error: Option<SharedString>,
@@ -178,6 +181,7 @@ impl AppShell {
                     // §8: Tray ありの時だけ常駐を有効化。
                     this.keep_running
                         .set(settings.keep_running_in_background && this.tray.is_some());
+                    *this.notif_prefs.borrow_mut() = settings.notifications.clone();
                     theme::apply(settings.appearance, None, cx);
                     cx.notify();
                 }
@@ -193,6 +197,9 @@ impl AppShell {
             },
         );
 
+        let notif_prefs = std::rc::Rc::new(std::cell::RefCell::new(
+            settings.notifications.clone(),
+        ));
         let mut this = Self {
             settings,
             settings_store,
@@ -212,6 +219,7 @@ impl AppShell {
             tray,
             keep_running,
             window_handle: window.window_handle(),
+            notif_prefs,
             auth_waiting: false,
             auth_error: None,
             palette: None,
@@ -350,11 +358,12 @@ impl AppShell {
         let Some(mut engine) = engine else {
             return;
         };
+        // prefs は共有セル経由。ループ先頭で Entity を borrow すると
+        // ハンドラの borrow と衝突して panic し得るため。
+        let notif_prefs = self.notif_prefs.clone();
         cx.spawn(async move |this, cx| {
             loop {
-                let prefs = this
-                    .update(cx, |s, _| s.settings.notifications.clone())
-                    .unwrap_or_default();
+                let prefs = notif_prefs.borrow().clone();
                 match engine.tick(&prefs).await {
                     Ok(outcome) => {
                         let cursor = engine.last_cursor().map(str::to_owned);
@@ -380,12 +389,15 @@ impl AppShell {
         if self.tray.is_none() {
             return;
         }
+        // MenuId だけを切り出して受信する。hot loop で Entity を borrow すると
+        // クリックハンドラ等の App borrow と衝突して panic するため。
+        let Some(ids) = self.tray.as_ref().map(|t| t.ids()) else {
+            return;
+        };
         cx.spawn(async move |this, cx| {
             loop {
-                let action = this
-                    .update(cx, |s, _| s.tray.as_ref().and_then(|t| t.poll_action()))
-                    .ok()
-                    .flatten();
+                let action = ::platform::poll_menu_event()
+                    .and_then(|ev| ::platform::AppTray::map_event(&ev, &ids));
                 match action {
                     Some(::platform::TrayAction::Open) => {
                         let handle = this.update(cx, |s, _| s.window_handle).ok();

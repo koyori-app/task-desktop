@@ -15,7 +15,7 @@ pub use credential::CredentialStore;
 pub use error::{Error, Result};
 pub use hotkey::{GlobalHotKey, HotKeyHandle, HotKeyManager};
 pub use notify::{Notifier, OsNotification};
-pub use tray::{AppTray, TrayAction};
+pub use tray::{AppTray, TrayAction, poll_menu_event};
 
 /// Device Token を入れる credential store の service 名（desktop.md §6）。
 pub const CREDENTIAL_SERVICE: &str = "app.koyori.desktop";

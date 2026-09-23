@@ -54,12 +54,30 @@ impl AppTray {
     /// メニューイベントを 1 件だけ取り出し `TrayAction` へ変換。
     /// 未対応イベント・空は `None`。
     pub fn poll_action(&self) -> Option<TrayAction> {
-        let event = MenuEvent::receiver().try_recv().ok()?;
-        if event.id == self.open_id {
+        Self::map_event(&MenuEvent::receiver().try_recv().ok()?, &self.ids())
+    }
+
+    /// イベント受信を別スレッド/タスクに移すための MenuId 3 つ組。
+    /// （hot loop で Entity を borrow すると `RefCell already borrowed`
+    /// になり得るため、ID だけ切り出して受信側で解決する）
+    pub fn ids(&self) -> (muda::MenuId, muda::MenuId, muda::MenuId) {
+        (
+            self.open_id.clone(),
+            self.notifications_id.clone(),
+            self.quit_id.clone(),
+        )
+    }
+
+    /// `ids()` と組み合わせてイベントを `TrayAction` へ変換。
+    pub fn map_event(
+        event: &MenuEvent,
+        (open, notifications, quit): &(muda::MenuId, muda::MenuId, muda::MenuId),
+    ) -> Option<TrayAction> {
+        if event.id == *open {
             Some(TrayAction::Open)
-        } else if event.id == self.notifications_id {
+        } else if event.id == *notifications {
             Some(TrayAction::ShowNotifications)
-        } else if event.id == self.quit_id {
+        } else if event.id == *quit {
             Some(TrayAction::Quit)
         } else {
             None
@@ -77,6 +95,12 @@ impl AppTray {
             .set_icon(Some(decode_png_icon(icon_png)?))
             .map_err(Into::into)
     }
+}
+
+/// Tray メニューイベントを非ブロッキングで 1 件取り出す。
+/// AppTray を持たない受信側（ポーリングタスク）から使う。
+pub fn poll_menu_event() -> Option<MenuEvent> {
+    MenuEvent::receiver().try_recv().ok()
 }
 
 fn decode_png_icon(png: &[u8]) -> Result<tray_icon::Icon> {
