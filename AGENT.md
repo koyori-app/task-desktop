@@ -9,7 +9,8 @@ docs配下の仕様書を読むこと。その際task.mdは現在実装中であ
 
 ## Git
 
-- コミットメッセージに `Co-Authored-By` トレーラーを付けない
+- コミットメッセージに `Co-Authored-By` トレーラーや `Generated with …` 等の
+  プロモーション行を付けない。本文は変更内容だけを書く
 - GPG 署名は不要（`git -c commit.gpgsign=false commit`）
 - 適宜コミットして進める。日本語の Conventional Commits
 
