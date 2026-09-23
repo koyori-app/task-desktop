@@ -1,0 +1,18 @@
+[package]
+name = "platform"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror = "2"
+keyring = "4.2.0"
+notify-rust = { version = "4.18.0", default-features = false }
+global-hotkey = "0.8.0"
+auto-launch = "0.6.0"
+tray-icon = "0.25.1"
+muda = "0.20.0"
+image = { version = "0.25", default-features = false, features = ["png"] }
+opener = "0.8.5"
+
+[target.'cfg(windows)'.dependencies]
+tauri-winrt-notification = "0.8.1"
