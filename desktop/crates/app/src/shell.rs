@@ -20,6 +20,8 @@ use crate::theme::{self, KoyoriColors};
 
 /// §7: 通知ポーリング間隔。
 const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+/// §9: Tray メニューイベントのポーリング間隔。
+const TRAY_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(300);
 
 // §20 Command Palette (Ctrl+K) / Quick Search (Ctrl+P)。
 actions!(shell, [OpenPalette, OpenQuickSearch]);
@@ -109,6 +111,12 @@ pub struct AppShell {
     pub projects: Vec<api::types::ProjectResponse>,
     /// Content / Detail の分割位置（§14: レイアウト状態はローカル保存）。
     pub resizable: Entity<ResizableState>,
+    /// §9 System Tray。非対応環境では None（閉じたら終了、§8）。
+    tray: Option<::platform::AppTray>,
+    /// Window close → Hide を動的に切り替える共有フラグ（§8）。
+    keep_running: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Tray からの再表示に使う Window ハンドル。
+    window_handle: AnyWindowHandle,
     /// §20 パレット。Some(kind) の間だけオーバーレイ表示。
     palette: Option<PaletteKind>,
     palette_state: Entity<CommandState>,
@@ -122,6 +130,8 @@ impl AppShell {
         settings_store: core::SettingsStore,
         client: Option<api::Client>,
         engine: Option<core::NotificationEngine>,
+        tray: Option<::platform::AppTray>,
+        keep_running: std::rc::Rc<std::cell::Cell<bool>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -160,6 +170,9 @@ impl AppShell {
             |this, _view, ev: &SettingsEvent, cx| match ev {
                 SettingsEvent::Changed(settings) => {
                     this.settings = settings.clone();
+                    // §8: Tray ありの時だけ常駐を有効化。
+                    this.keep_running
+                        .set(settings.keep_running_in_background && this.tray.is_some());
                     theme::apply(settings.appearance, None, cx);
                     cx.notify();
                 }
@@ -191,12 +204,16 @@ impl AppShell {
             tenants: vec![],
             projects: vec![],
             resizable: cx.new(|_| ResizableState::default()),
+            tray,
+            keep_running,
+            window_handle: window.window_handle(),
             palette: None,
             palette_state: cx.new(|cx| CommandState::new(window, cx)),
             palette_entries: vec![],
             _subs: vec![sub, sub2, sub3, sub4],
         };
         this.start_polling(engine, cx);
+        this.start_tray_polling(cx);
         if let Some(client) = client {
             this.bootstrap(client, cx);
         }
@@ -272,6 +289,46 @@ impl AppShell {
         .detach();
     }
 
+    /// §9: Tray メニューイベントをポーリングして処理する。
+    /// Open → 前面化 / Notifications → 前面化 + Center へ / Quit → 終了。
+    fn start_tray_polling(&mut self, cx: &mut Context<Self>) {
+        if self.tray.is_none() {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            loop {
+                let action = this
+                    .update(cx, |s, _| s.tray.as_ref().and_then(|t| t.poll_action()))
+                    .ok()
+                    .flatten();
+                match action {
+                    Some(::platform::TrayAction::Open) => {
+                        let handle = this.update(cx, |s, _| s.window_handle).ok();
+                        if let Some(handle) = handle {
+                            let _ =
+                                cx.update_window(handle, |_, window, _| window.activate_window());
+                        }
+                    }
+                    Some(::platform::TrayAction::ShowNotifications) => {
+                        let _ = this.update(cx, |s, cx| {
+                            s.navigate(Route::Notifications, cx);
+                            cx.update_window(s.window_handle, |_, window, _| {
+                                window.activate_window()
+                            })
+                            .ok();
+                        });
+                    }
+                    Some(::platform::TrayAction::Quit) => {
+                        cx.update(|cx| cx.quit());
+                    }
+                    None => {}
+                }
+                cx.background_executor().timer(TRAY_POLL_INTERVAL).await;
+            }
+        })
+        .detach();
+    }
+
     /// tick の結果を UI へ反映（unread badge / Center 新着 / 接続状態 / カーソル保存）。
     fn apply_tick(
         &mut self,
@@ -281,6 +338,14 @@ impl AppShell {
     ) {
         self.unread_count = outcome.unread_count;
         self.connection = ConnectionStatus::Online;
+        // §9: 未読数を Tray ツールチップへ反映。
+        if let Some(tray) = &self.tray {
+            let tip = match self.unread_count {
+                0 => "Koyori".to_string(),
+                n => format!("Koyori — {n} unread"),
+            };
+            let _ = tray.set_tooltip(&tip);
+        }
         if cursor.is_some() && cursor != self.settings.notification_cursor {
             self.settings.notification_cursor = cursor;
             let _ = self.settings_store.save(&self.settings);
