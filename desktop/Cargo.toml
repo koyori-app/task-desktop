@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/app",
+    "crates/api",
+    "crates/core",
+    "crates/platform",
+    "crates/features/*",
+]
+
+[workspace.package]
+edition = "2024"
+license = "AGPL-3.0-only"
+
+[workspace.dependencies]
+gpui-kit = "=0.6.1"

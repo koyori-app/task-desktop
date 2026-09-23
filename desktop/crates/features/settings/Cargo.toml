@@ -1,0 +1,6 @@
+[package]
+name = "feature-settings"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

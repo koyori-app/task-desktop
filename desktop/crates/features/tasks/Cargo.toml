@@ -1,0 +1,6 @@
+[package]
+name = "feature-tasks"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

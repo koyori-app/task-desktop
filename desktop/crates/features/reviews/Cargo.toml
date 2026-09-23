@@ -1,0 +1,6 @@
+[package]
+name = "feature-reviews"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

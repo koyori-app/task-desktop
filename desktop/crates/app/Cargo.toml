@@ -1,0 +1,11 @@
+[package]
+name = "app"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+
+[[bin]]
+name = "koyori"
+path = "src/main.rs"
