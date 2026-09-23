@@ -5,6 +5,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::badge::Badge;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::command::{Command, CommandItem, CommandState};
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel};
 use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenuItem};
 use gpui_kit::component::{Icon, IndexPath};
@@ -564,11 +565,20 @@ impl AppShell {
     }
 
     fn header(&self, colors: &KoyoriColors, cx: &mut Context<Self>) -> impl IntoElement {
+        // §305: テナントは Header で切り替える。UUID ではなく表示名を出す。
+        let tenant_id = self.settings.last_tenant_id;
         let tenant_name = self
-            .settings
-            .last_tenant_id
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "no tenant".into());
+            .tenants
+            .iter()
+            .find(|t| Some(t.id) == tenant_id)
+            .map(|t| t.name.clone())
+            .unwrap_or_else(|| "Tenant".into());
+        let tenant_items: Vec<(uuid::Uuid, SharedString)> = self
+            .tenants
+            .iter()
+            .map(|t| (t.id, t.name.clone().into()))
+            .collect();
+        let shell = cx.entity();
 
         let status_color = match self.connection {
             ConnectionStatus::Online => colors.success,
@@ -591,10 +601,26 @@ impl AppShell {
                     .child("Koyori"),
             )
             .child(
-                div()
-                    .text_sm()
-                    .text_color(colors.text_muted)
-                    .child(tenant_name),
+                Button::new("tenant-switcher")
+                    .ghost()
+                    .label(tenant_name)
+                    .icon(IconName::ChevronDown)
+                    .dropdown_menu(move |menu, _, _| {
+                        let mut m = menu.min_w(px(180.));
+                        for (id, name) in tenant_items.iter().cloned() {
+                            let shell = shell.clone();
+                            m = m.item(
+                                PopupMenuItem::new(name)
+                                    .checked(Some(id) == tenant_id)
+                                    .on_click(move |_, _, cx| {
+                                        cx.update_entity(&shell, |s, cx| {
+                                            s.switch_tenant(id, cx);
+                                        });
+                                    }),
+                            );
+                        }
+                        m
+                    }),
             )
             .child(div().flex_1())
             // §23 Connection Status

@@ -17,7 +17,9 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 const TENANT: &str = "11111111-1111-1111-1111-111111111111";
+const TENANT2: &str = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
 const PROJECT: &str = "22222222-2222-2222-2222-222222222222";
+const PROJECT2: &str = "dddddddd-dddd-dddd-dddd-dddddddddddd";
 const PERSONAL: &str = "33333333-3333-3333-3333-333333333333";
 const USER_YUPIX: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const USER_ALICE: &str = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -41,12 +43,20 @@ fn status(id: &str, name: &str, color: &str, pos: i32, done: bool, default_done:
     })
 }
 
-fn task(id: Uuid, seq: i32, title: &str, st: &str, priority: &str, assignees: Value) -> Value {
+fn task(
+    id: Uuid,
+    seq: i32,
+    title: &str,
+    st: &str,
+    priority: &str,
+    assignees: Value,
+    project: &str,
+) -> Value {
     json!({
         "id": id, "seq_id": seq, "title": title,
         "description": format!("{title} の説明文。\n\n- 箇条書き\n- **太字** も含む"),
         "status_id": st, "priority": priority, "progress_pct": 0,
-        "project_id": PROJECT, "assignees": assignees,
+        "project_id": project, "assignees": assignees,
         "labels": [], "custom_field_values": [],
         "milestone_id": null, "sprint_id": null, "parent_task_id": null,
         "estimated_minutes": null, "soft_deadline": null, "hard_deadline": null,
@@ -79,10 +89,12 @@ impl Mock {
             {"role": "reviewer", "user": user(USER_ALICE, "alice")},
         ]);
         let mut tasks = vec![
-            task(t1, 1, "モック環境の動作確認", ST_TODO, "High", me.clone()),
-            task(t2, 2, "通知センターの表示確認", ST_DOING, "Medium", both),
-            task(t3, 3, "コメント投稿のテスト", ST_BACKLOG, "Low", json!([])),
-            task(t4, 4, "完了済みタスクの例", ST_DONE, "Trivial", me),
+            task(t1, 1, "モック環境の動作確認", ST_TODO, "High", me.clone(), PROJECT),
+            task(t2, 2, "通知センターの表示確認", ST_DOING, "Medium", both, PROJECT),
+            task(t3, 3, "コメント投稿のテスト", ST_BACKLOG, "Low", json!([]), PROJECT),
+            task(t4, 4, "完了済みタスクの例", ST_DONE, "Trivial", me.clone(), PROJECT),
+            task(Uuid::new_v4(), 1, "別テナントのタスク", ST_TODO, "Medium", me, PROJECT2),
+            task(Uuid::new_v4(), 2, "OTHER プロジェクトの件", ST_DOING, "High", json!([]), PROJECT2),
         ];
         tasks[3]["completed_at"] = json!("2026-09-22T15:00:00Z");
 
@@ -191,37 +203,57 @@ fn find_task(m: &Mock, id: Uuid) -> Option<usize> {
 // ---- handlers ----
 
 async fn tenants() -> Json<Value> {
-    Json(json!([{
-        "id": TENANT, "display_id": "mock", "name": "Mock Tenant",
-        "description": "ローカルモック", "icon_url": "", "icon_emoji": "🧪",
-        "member_role": "Admin", "membership": "Owner",
-        "owner_id": USER_YUPIX, "require_2fa": false, "drive_quota_bytes": null,
-    }]))
-}
-
-async fn projects() -> Json<Value> {
     Json(json!([
-        {"id": PROJECT, "tenant_id": TENANT, "key": "MOCK", "name": "Mock Project",
-         "description": "", "icon_url": null, "icon_emoji": "📦",
-         "is_personal": false, "personal_owner_id": null},
-        {"id": PERSONAL, "tenant_id": TENANT, "key": "PERSONAL", "name": "Personal",
-         "description": "", "icon_url": null, "icon_emoji": null,
-         "is_personal": true, "personal_owner_id": USER_YUPIX},
+        {
+            "id": TENANT, "display_id": "mock", "name": "Mock Tenant",
+            "description": "ローカルモック", "icon_url": "", "icon_emoji": "🧪",
+            "member_role": "Admin", "membership": "Owner",
+            "owner_id": USER_YUPIX, "require_2fa": false, "drive_quota_bytes": null,
+        },
+        {
+            "id": TENANT2, "display_id": "other", "name": "Other Tenant",
+            "description": "2つ目のテナント", "icon_url": "", "icon_emoji": "🏢",
+            "member_role": "Member", "membership": "Member",
+            "owner_id": USER_ALICE, "require_2fa": false, "drive_quota_bytes": null,
+        },
     ]))
 }
 
-async fn personal_project() -> Json<Value> {
-    Json(json!({"id": PERSONAL, "tenant_id": TENANT, "key": "PERSONAL", "name": "Personal",
+async fn projects(Path(tenant): Path<String>) -> Json<Value> {
+    let mut v = vec![
+        json!({"id": PERSONAL, "tenant_id": tenant, "key": "PERSONAL", "name": "Personal",
+            "description": "", "icon_url": null, "icon_emoji": null,
+            "is_personal": true, "personal_owner_id": USER_YUPIX}),
+    ];
+    if tenant == TENANT {
+        v.insert(0, json!({"id": PROJECT, "tenant_id": TENANT, "key": "MOCK", "name": "Mock Project",
+            "description": "", "icon_url": null, "icon_emoji": "📦",
+            "is_personal": false, "personal_owner_id": null}));
+    } else {
+        v.insert(0, json!({"id": PROJECT2, "tenant_id": TENANT2, "key": "OTH", "name": "Other Project",
+            "description": "", "icon_url": null, "icon_emoji": "📁",
+            "is_personal": false, "personal_owner_id": null}));
+    }
+    Json(json!(v))
+}
+
+async fn personal_project(Path(tenant): Path<String>) -> Json<Value> {
+    Json(json!({"id": PERSONAL, "tenant_id": tenant, "key": "PERSONAL", "name": "Personal",
         "description": "", "icon_url": null, "icon_emoji": null,
         "is_personal": true, "personal_owner_id": USER_YUPIX}))
 }
 
-async fn statuses() -> Json<Value> {
+async fn statuses(Path((_, p)): Path<(String, String)>) -> Json<Value> {
+    let mk = |id: &str, name: &str, color: &str, pos: i32, done: bool, dd: bool| {
+        let mut s = status(id, name, color, pos, done, dd);
+        s["project_id"] = json!(p);
+        s
+    };
     Json(json!([
-        status(ST_BACKLOG, "Backlog", "#8b949e", 0, false, false),
-        status(ST_TODO, "Todo", "#1f6feb", 1, false, false),
-        status(ST_DOING, "In Progress", "#d29922", 2, false, false),
-        status(ST_DONE, "Done", "#238636", 3, true, true),
+        mk(ST_BACKLOG, "Backlog", "#8b949e", 0, false, false),
+        mk(ST_TODO, "Todo", "#1f6feb", 1, false, false),
+        mk(ST_DOING, "In Progress", "#d29922", 2, false, false),
+        mk(ST_DONE, "Done", "#238636", 3, true, true),
     ]))
 }
 
@@ -229,20 +261,34 @@ async fn assignable_users() -> Json<Value> {
     Json(json!([user(USER_YUPIX, "yupix"), user(USER_ALICE, "alice")]))
 }
 
-async fn list_tasks(State(m): State<Shared>) -> Json<Value> {
-    let m = m.lock().unwrap();
-    Json(json!({"tasks": m.tasks, "total": m.tasks.len(), "next_cursor": null}))
+fn tenant_of_project(p: &str) -> &str {
+    if p == PROJECT2 { TENANT2 } else { TENANT }
 }
 
-async fn my_tasks(State(m): State<Shared>) -> Json<Value> {
+async fn list_tasks(
+    State(m): State<Shared>,
+    Path((_, p)): Path<(String, String)>,
+) -> Json<Value> {
+    let m = m.lock().unwrap();
+    let tasks: Vec<Value> = m
+        .tasks
+        .iter()
+        .filter(|t| t["project_id"] == p)
+        .cloned()
+        .collect();
+    Json(json!({"tasks": tasks, "total": tasks.len(), "next_cursor": null}))
+}
+
+async fn my_tasks(State(m): State<Shared>, Path(tenant): Path<String>) -> Json<Value> {
     let m = m.lock().unwrap();
     let items: Vec<Value> = m
         .tasks
         .iter()
         .filter(|t| {
-            t["assignees"].as_array().is_some_and(|a| {
-                a.iter().any(|x| x["user"]["id"] == USER_YUPIX)
-            })
+            tenant_of_project(t["project_id"].as_str().unwrap_or_default()) == tenant
+                && t["assignees"].as_array().is_some_and(|a| {
+                    a.iter().any(|x| x["user"]["id"] == USER_YUPIX)
+                })
         })
         .map(|t| {
             let st_name = match t["status_id"].as_str().unwrap_or_default() {
@@ -251,13 +297,21 @@ async fn my_tasks(State(m): State<Shared>) -> Json<Value> {
                 ST_DOING => ("In Progress", "#d29922"),
                 _ => ("Done", "#238636"),
             };
+            let pid = t["project_id"].as_str().unwrap_or_default();
+            let (key, name) = if pid == PROJECT2 {
+                ("OTH", "Other Project")
+            } else if pid == PERSONAL {
+                ("PERSONAL", "Personal")
+            } else {
+                ("MOCK", "Mock Project")
+            };
             json!({
                 "id": t["id"], "seq_id": t["seq_id"],
-                "seq_key": format!("MOCK-{}", t["seq_id"].as_i64().unwrap_or(0)),
+                "seq_key": format!("{key}-{}", t["seq_id"].as_i64().unwrap_or(0)),
                 "title": t["title"], "priority": t["priority"],
                 "status": {"id": t["status_id"], "name": st_name.0, "color": st_name.1},
-                "project": {"id": PROJECT, "key": "MOCK", "name": "Mock Project", "is_personal": false},
-                "is_personal": false,
+                "project": {"id": pid, "key": key, "name": name, "is_personal": pid == PERSONAL},
+                "is_personal": pid == PERSONAL,
                 "soft_deadline": t["soft_deadline"], "hard_deadline": t["hard_deadline"],
             })
         })
@@ -300,11 +354,11 @@ async fn create_task(
         body["status_id"].as_str().unwrap_or(ST_TODO),
         body["priority"].as_str().unwrap_or("Medium"),
         json!(assignees),
+        &p,
     );
     if !body["description"].is_null() {
         t["description"] = body["description"].clone();
     }
-    t["project_id"] = json!(p);
     m.tasks.push(t.clone());
     Json(t).into_response()
 }
