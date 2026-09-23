@@ -54,6 +54,11 @@ impl ReviewListView {
         self.tenant = tenant;
     }
 
+    /// ログアウト時に呼ぶ。
+    pub fn clear_client(&mut self) {
+        self.client = None;
+    }
+
     pub fn set_project(&mut self, project: Uuid, cx: &mut Context<Self>) {
         self.project = Some(project);
         self.reload(cx);
@@ -135,10 +140,7 @@ impl ReviewListView {
         };
         let blocked = pr.blocking > 0;
         let n = pr.pr_number as i64;
-        let title = pr
-            .pr_title
-            .clone()
-            .unwrap_or_else(|| format!("PR #{n}"));
+        let title = pr.pr_title.clone().unwrap_or_else(|| format!("PR #{n}"));
         let title_opt = pr.pr_title.clone();
 
         div()
@@ -167,13 +169,7 @@ impl ReviewListView {
                     .flex_shrink_0()
                     .child(format!("#{n}")),
             )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_sm()
-                    .child(title),
-            )
+            .child(div().flex_1().min_w_0().text_sm().child(title))
             .child(
                 div()
                     .text_xs()
@@ -201,11 +197,7 @@ impl ReviewListView {
                 div()
                     .text_xs()
                     .text_color(c.muted_foreground)
-                    .child(
-                        pr.last_reviewed_at
-                            .format("%m-%d %H:%M")
-                            .to_string(),
-                    ),
+                    .child(pr.last_reviewed_at.format("%m-%d %H:%M").to_string()),
             )
     }
 }
@@ -305,17 +297,16 @@ impl Render for ReviewListView {
                             Button::new("rv-create")
                                 .ghost()
                                 .label("Create")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.create_review(cx)
-                                })),
+                                .on_click(cx.listener(|this, _, _, cx| this.create_review(cx))),
                         ),
                 )
             })
             .when_some(self.error.clone(), |d, e| {
                 d.child(
-                    div().px_4().py_2().child(
-                        div().text_sm().text_color(danger).child(e),
-                    ),
+                    div()
+                        .px_4()
+                        .py_2()
+                        .child(div().text_sm().text_color(danger).child(e)),
                 )
             })
             .child(list)

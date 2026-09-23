@@ -224,6 +224,7 @@ dependencies = [
  "core",
  "feature-notifications",
  "feature-reviews",
+ "feature-settings",
  "feature-tasks",
  "gpui-kit",
  "platform",
@@ -1994,6 +1995,14 @@ version = "0.0.0"
 [[package]]
 name = "feature-settings"
 version = "0.0.0"
+dependencies = [
+ "api",
+ "chrono",
+ "core",
+ "gpui-kit",
+ "platform",
+ "uuid",
+]
 
 [[package]]
 name = "feature-tasks"

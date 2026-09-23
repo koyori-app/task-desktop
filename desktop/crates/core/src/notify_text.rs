@@ -93,7 +93,8 @@ pub fn toast(item: &NotificationItem) -> OsNotification {
         parts.push(actor.to_string());
     }
     // round_created は件数が payload に入る（§10）
-    if let Some(n) = payload_i64(payload, "finding_count").or_else(|| payload_i64(payload, "count")) {
+    if let Some(n) = payload_i64(payload, "finding_count").or_else(|| payload_i64(payload, "count"))
+    {
         parts.push(format!("{n} findings"));
     }
 

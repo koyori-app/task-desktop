@@ -1,18 +1,19 @@
 //! メインウィンドウの骨組み（desktop.md §14）。
 //! Header / Sidebar / Content / Detail。中身は feature crate が後から埋める。
 
+use gpui_kit::assets::IconName;
 use gpui_kit::component::badge::Badge;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::command::{Command, CommandItem, CommandState};
-use gpui_kit::component::{Icon, IndexPath};
 use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel};
 use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenuItem};
-use gpui_kit::assets::IconName;
+use gpui_kit::component::{Icon, IndexPath};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use feature_notifications::{CenterEvent, NavTarget, NotificationCenter};
 use feature_reviews::{ReviewDetailView, ReviewListEvent, ReviewListView};
+use feature_settings::{SettingsEvent, SettingsView};
 use feature_tasks::{ListMode, TaskDetailView, TaskListEvent, TaskListView};
 
 use crate::theme::{self, KoyoriColors};
@@ -34,7 +35,10 @@ enum PaletteKind {
 #[derive(Debug, Clone)]
 enum PaletteAct {
     Navigate(Route),
-    OpenTask { project: uuid::Uuid, task: uuid::Uuid },
+    OpenTask {
+        project: uuid::Uuid,
+        task: uuid::Uuid,
+    },
     MarkAllRead,
     RefreshTasks,
 }
@@ -56,9 +60,17 @@ pub enum Route {
     Today,
     Upcoming,
     Notifications,
-    Project { id: uuid::Uuid, label: String },
-    TaskDetail { project: uuid::Uuid, task: uuid::Uuid },
-    Reviews { project: uuid::Uuid },
+    Project {
+        id: uuid::Uuid,
+        label: String,
+    },
+    TaskDetail {
+        project: uuid::Uuid,
+        task: uuid::Uuid,
+    },
+    Reviews {
+        project: uuid::Uuid,
+    },
     Settings,
 }
 
@@ -88,6 +100,8 @@ pub struct AppShell {
     pub review_list: Entity<ReviewListView>,
     /// §17-18 Review 詳細（Detail 側）。
     pub review_detail: Entity<ReviewDetailView>,
+    /// §22 Settings。
+    pub settings_view: Entity<SettingsView>,
     pub route: Route,
     pub unread_count: i64,
     pub connection: ConnectionStatus,
@@ -118,24 +132,46 @@ impl AppShell {
         });
         let tenant = settings.last_tenant_id;
         let task_list = cx.new(|cx| TaskListView::new(client.clone(), tenant, window, cx));
-        let task_detail =
-            cx.new(|cx| TaskDetailView::new(client.clone(), tenant, window, cx));
-        let sub2 = cx.subscribe(
-            &task_list,
-            |this, _list, ev: &TaskListEvent, cx| {
-                let TaskListEvent::Select { project, task } = ev;
-                this.task_detail
-                    .update(cx, |d, cx| d.open(*project, *task, cx));
-            },
-        );
+        let task_detail = cx.new(|cx| TaskDetailView::new(client.clone(), tenant, window, cx));
+        let sub2 = cx.subscribe(&task_list, |this, _list, ev: &TaskListEvent, cx| {
+            let TaskListEvent::Select { project, task } = ev;
+            this.task_detail
+                .update(cx, |d, cx| d.open(*project, *task, cx));
+        });
         let review_list = cx.new(|cx| ReviewListView::new(client.clone(), tenant, window, cx));
         let review_detail = cx.new(|_| ReviewDetailView::new(client.clone(), tenant));
-        let sub3 = cx.subscribe(
-            &review_list,
-            |this, _list, ev: &ReviewListEvent, cx| {
-                let ReviewListEvent::Select { pr, title } = ev;
-                this.review_detail
-                    .update(cx, |d, cx| d.open(*pr, title.clone(), cx));
+        let sub3 = cx.subscribe(&review_list, |this, _list, ev: &ReviewListEvent, cx| {
+            let ReviewListEvent::Select { pr, title } = ev;
+            this.review_detail
+                .update(cx, |d, cx| d.open(*pr, title.clone(), cx));
+        });
+
+        let settings_view = cx.new(|cx| {
+            SettingsView::new(
+                settings.clone(),
+                settings_store.clone(),
+                client.clone(),
+                window,
+                cx,
+            )
+        });
+        let sub4 = cx.subscribe(
+            &settings_view,
+            |this, _view, ev: &SettingsEvent, cx| match ev {
+                SettingsEvent::Changed(settings) => {
+                    this.settings = settings.clone();
+                    theme::apply(settings.appearance, None, cx);
+                    cx.notify();
+                }
+                SettingsEvent::LoggedOut => {
+                    this.client = None;
+                    this.task_list.update(cx, |l, cx| l.clear_client(cx));
+                    this.task_detail.update(cx, |d, _| d.clear_client());
+                    this.review_list.update(cx, |l, _| l.clear_client());
+                    this.review_detail.update(cx, |d, _| d.clear_client());
+                    this.center.update(cx, |c, cx| c.clear_client(cx));
+                    this.navigate(Route::MyTasks, cx);
+                }
             },
         );
 
@@ -143,6 +179,7 @@ impl AppShell {
             settings,
             settings_store,
             client: client.clone(),
+            settings_view,
             center,
             task_list,
             task_detail,
@@ -157,7 +194,7 @@ impl AppShell {
             palette: None,
             palette_state: cx.new(|cx| CommandState::new(window, cx)),
             palette_entries: vec![],
-            _subs: vec![sub, sub2, sub3],
+            _subs: vec![sub, sub2, sub3, sub4],
         };
         this.start_polling(engine, cx);
         if let Some(client) = client {
@@ -175,14 +212,12 @@ impl AppShell {
                 .update(cx, |s, cx| {
                     s.tenants = tenants;
                     if s.settings.last_tenant_id.is_none() {
-                        s.settings.last_tenant_id =
-                            s.tenants.first().map(|t| t.id);
+                        s.settings.last_tenant_id = s.tenants.first().map(|t| t.id);
                         let _ = s.settings_store.save(&s.settings);
                     }
                     let tenant = s.settings.last_tenant_id;
-                    s.task_list.update(cx, |l, cx| {
-                        l.set_client(client.clone(), tenant, cx)
-                    });
+                    s.task_list
+                        .update(cx, |l, cx| l.set_client(client.clone(), tenant, cx));
                     s.task_detail
                         .update(cx, |d, _| d.set_client(client.clone(), tenant));
                     s.review_list
@@ -315,9 +350,7 @@ impl AppShell {
         SidebarMenuItem::new(label)
             .icon(icon)
             .active(active)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.navigate(route.clone(), cx)
-            }))
+            .on_click(cx.listener(move |this, _, _, cx| this.navigate(route.clone(), cx)))
     }
 
     fn sidebar(&self, colors: &KoyoriColors, cx: &mut Context<Self>) -> impl IntoElement {
@@ -352,9 +385,7 @@ impl AppShell {
                     d.child(Badge::new().count(unread.max(0) as usize))
                 })
             })
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.navigate(Route::Notifications, cx)
-            }));
+            .on_click(cx.listener(|this, _, _, cx| this.navigate(Route::Notifications, cx)));
 
         div()
             .w(px(230.))
@@ -391,7 +422,12 @@ impl AppShell {
             .gap_3()
             .border_b_1()
             .border_color(colors.border)
-            .child(div().text_lg().font_weight(FontWeight::BOLD).child("Koyori"))
+            .child(
+                div()
+                    .text_lg()
+                    .font_weight(FontWeight::BOLD)
+                    .child("Koyori"),
+            )
             .child(
                 div()
                     .text_sm()
@@ -419,17 +455,15 @@ impl AppShell {
                 Button::new("notifications")
                     .ghost()
                     .icon(IconName::Bell)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.navigate(Route::Notifications, cx)
-                    })),
+                    .on_click(
+                        cx.listener(|this, _, _, cx| this.navigate(Route::Notifications, cx)),
+                    ),
             )
             .child(
                 Button::new("settings")
                     .ghost()
                     .icon(IconName::Settings)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.navigate(Route::Settings, cx)
-                    })),
+                    .on_click(cx.listener(|this, _, _, cx| this.navigate(Route::Settings, cx))),
             )
     }
 
@@ -468,7 +502,11 @@ impl AppShell {
                 v.push(nav("Go to My Tasks", IconName::ListTodo, Route::MyTasks));
                 v.push(nav("Go to Today", IconName::Calendar, Route::Today));
                 v.push(nav("Go to Upcoming", IconName::Calendar, Route::Upcoming));
-                v.push(nav("Go to Notifications", IconName::Bell, Route::Notifications));
+                v.push(nav(
+                    "Go to Notifications",
+                    IconName::Bell,
+                    Route::Notifications,
+                ));
                 v.push(nav("Go to Settings", IconName::Settings, Route::Settings));
                 for p in &self.projects {
                     v.push(PaletteEntry {
@@ -506,10 +544,7 @@ impl AppShell {
                     v.push(PaletteEntry {
                         label: label.clone().into(),
                         icon: IconName::ClipboardList,
-                        keywords: vec![
-                            r.seq_key.clone().into(),
-                            r.title.clone().into(),
-                        ],
+                        keywords: vec![r.seq_key.clone().into(), r.title.clone().into()],
                         act: PaletteAct::OpenTask {
                             project: r.project_id,
                             task: r.id,
@@ -542,12 +577,8 @@ impl AppShell {
             PaletteAct::OpenTask { project, task } => {
                 self.navigate(Route::TaskDetail { project, task }, cx)
             }
-            PaletteAct::MarkAllRead => {
-                self.center.update(cx, |c, cx| c.mark_all_read(cx))
-            }
-            PaletteAct::RefreshTasks => {
-                self.task_list.update(cx, |l, cx| l.reload(cx))
-            }
+            PaletteAct::MarkAllRead => self.center.update(cx, |c, cx| c.mark_all_read(cx)),
+            PaletteAct::RefreshTasks => self.task_list.update(cx, |l, cx| l.reload(cx)),
         }
         self.close_palette(cx);
     }
@@ -584,9 +615,7 @@ impl AppShell {
             .child(
                 div()
                     .w(px(560.))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                        cx.stop_propagation()
-                    })
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(
                         Command::new(&self.palette_state)
                             .items(items)
@@ -596,9 +625,7 @@ impl AppShell {
                                 let _ = weak2.update(cx, |this, cx| this.close_palette(cx));
                             })
                             .on_confirm(move |path, _, cx| {
-                                let _ = weak.update(cx, |this, cx| {
-                                    this.palette_confirm(path, cx)
-                                });
+                                let _ = weak.update(cx, |this, cx| this.palette_confirm(path, cx));
                             }),
                     ),
             )
@@ -618,9 +645,7 @@ impl AppShell {
                 .ghost()
                 .label(label)
                 .when(active, |b| b.text_color(colors.accent))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.navigate(route.clone(), cx)
-                }))
+                .on_click(cx.listener(move |this, _, _, cx| this.navigate(route.clone(), cx)))
         };
         div()
             .flex()
@@ -630,15 +655,22 @@ impl AppShell {
             .py_1()
             .border_b_1()
             .border_color(colors.border)
-            .child(mk("Tasks", tasks_active, Route::Project {
-                id: project,
-                label: key,
-            }))
+            .child(mk(
+                "Tasks",
+                tasks_active,
+                Route::Project {
+                    id: project,
+                    label: key,
+                },
+            ))
             .child(mk("Reviews", !tasks_active, Route::Reviews { project }))
     }
 
     fn content(&self, _colors: &KoyoriColors, cx: &mut Context<Self>) -> impl IntoElement {
         // feature crate の View が入る場所。
+        if self.route == Route::Settings {
+            return div().flex_1().h_full().child(self.settings_view.clone());
+        }
         if self.route == Route::Notifications {
             return div().flex_1().h_full().child(self.center.clone());
         }
@@ -678,18 +710,23 @@ impl AppShell {
             Route::Settings => "Settings".into(),
             _ => "—".into(),
         };
-        div()
-            .flex_1()
-            .h_full()
-            .p_4()
-            .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(title))
+        div().flex_1().h_full().p_4().child(
+            div()
+                .text_xl()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(title),
+        )
     }
 
     fn detail(&self, colors: &KoyoriColors) -> impl IntoElement {
         // タスク系ルートでは §15 Detail ペイン。
         if matches!(
             self.route,
-            Route::MyTasks | Route::Today | Route::Upcoming | Route::Project { .. } | Route::TaskDetail { .. }
+            Route::MyTasks
+                | Route::Today
+                | Route::Upcoming
+                | Route::Project { .. }
+                | Route::TaskDetail { .. }
         ) {
             return div()
                 .h_full()
@@ -765,18 +802,13 @@ impl Render for AppShell {
                                 .on_resize({
                                     let shell = cx.entity();
                                     move |state, _, cx| {
-                                        if let Some(w) =
-                                            state.read(cx).sizes().last().copied()
-                                        {
+                                        if let Some(w) = state.read(cx).sizes().last().copied() {
                                             shell.update(cx, |this, _| {
-                                                this.settings.window_layout = Some(
-                                                    serde_json::json!({
+                                                this.settings.window_layout =
+                                                    Some(serde_json::json!({
                                                         "detail_width": f64::from(w)
-                                                    }),
-                                                );
-                                                let _ = this
-                                                    .settings_store
-                                                    .save(&this.settings);
+                                                    }));
+                                                let _ = this.settings_store.save(&this.settings);
                                             });
                                         }
                                     }

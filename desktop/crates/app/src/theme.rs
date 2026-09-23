@@ -1,8 +1,8 @@
 //! §21 Theme。Koyori のセマンティックトークンを一箇所に集約する。
 //! Feature は色を直書きせず [`colors`] から取る。
 
-use gpui_kit::{App, Hsla, Window};
 use gpui_kit::component::{Theme, ThemeMode};
+use gpui_kit::{App, Hsla, Window};
 
 /// desktop.md §21 のトークン名に合わせた面。
 /// 実体は gpui-component の Theme / SemanticThemeTokens。

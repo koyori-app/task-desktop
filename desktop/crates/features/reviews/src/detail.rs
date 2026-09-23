@@ -44,6 +44,11 @@ impl ReviewDetailView {
         self.tenant = tenant;
     }
 
+    /// ログアウト時に呼ぶ。
+    pub fn clear_client(&mut self) {
+        self.client = None;
+    }
+
     pub fn set_project(&mut self, project: Uuid) {
         self.project = Some(project);
         self.pr = None;
@@ -59,12 +64,9 @@ impl ReviewDetailView {
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
-        let (Some(client), Some(tenant), Some(project), Some(pr)) = (
-            self.client.clone(),
-            self.tenant,
-            self.project,
-            self.pr,
-        ) else {
+        let (Some(client), Some(tenant), Some(project), Some(pr)) =
+            (self.client.clone(), self.tenant, self.project, self.pr)
+        else {
             return;
         };
         self.loading = true;
@@ -110,9 +112,7 @@ impl ReviewDetailView {
             let _ = this.update(cx, |this, cx| {
                 match res {
                     Ok(updated) => {
-                        if let Some(f) =
-                            this.findings.iter_mut().find(|f| f.id == finding)
-                        {
+                        if let Some(f) = this.findings.iter_mut().find(|f| f.id == finding) {
                             *f = updated;
                         }
                     }
@@ -123,7 +123,6 @@ impl ReviewDetailView {
         })
         .detach();
     }
-
 }
 
 fn severity_color(sev: &FindingSeverity, t: &gpui_kit::component::Theme) -> Hsla {
@@ -194,7 +193,9 @@ impl Render for ReviewDetailView {
                 };
                 actions_row = actions_row.child(
                     div()
-                        .id(ElementId::Name(format!("act-{}-{}", fid.simple(), label).into()))
+                        .id(ElementId::Name(
+                            format!("act-{}-{}", fid.simple(), label).into(),
+                        ))
                         .px_2()
                         .py_1()
                         .rounded_md()
@@ -203,9 +204,9 @@ impl Render for ReviewDetailView {
                         .bg(c.secondary)
                         .text_color(c.secondary_foreground)
                         .hover(|s| s.bg(c.muted))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.apply_action(fid, action, cx)
-                        })),
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.apply_action(fid, action, cx)),
+                        ),
                 );
             }
             findings_col = findings_col.child(
@@ -239,17 +240,19 @@ impl Render for ReviewDetailView {
                             ),
                     )
                     .when_some(f.file.clone(), |d, file| {
-                        d.child(
-                            div()
-                                .text_xs()
-                                .text_color(c.muted_foreground)
-                                .child(match f.line {
-                                    Some(l) => format!("{file}:{l}"),
-                                    None => file,
-                                }),
-                        )
+                        d.child(div().text_xs().text_color(c.muted_foreground).child(
+                            match f.line {
+                                Some(l) => format!("{file}:{l}"),
+                                None => file,
+                            },
+                        ))
                     })
-                    .child(div().text_sm().text_color(c.muted_foreground).child(f.body.clone()))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(c.muted_foreground)
+                            .child(f.body.clone()),
+                    )
                     .child(actions_row),
             );
         }
@@ -305,12 +308,7 @@ impl Render for ReviewDetailView {
                                 )
                             })
                             .when(head_moved, |d| {
-                                d.child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(t.warning)
-                                        .child("head moved"),
-                                )
+                                d.child(div().text_xs().text_color(t.warning).child("head moved"))
                             }),
                     )
                     .when_some(self.pr_title.clone(), |d, title| {
@@ -324,7 +322,11 @@ impl Render for ReviewDetailView {
                                 .child(format!(
                                     "{} rounds · {} unresolved · {} blocking",
                                     s.rounds,
-                                    s.counts.iter().filter(|x| matches!(x.state, FindingState::Open)).map(|x| x.count).sum::<i64>(),
+                                    s.counts
+                                        .iter()
+                                        .filter(|x| matches!(x.state, FindingState::Open))
+                                        .map(|x| x.count)
+                                        .sum::<i64>(),
                                     s.blocking,
                                 )),
                         )
@@ -339,7 +341,10 @@ impl Render for ReviewDetailView {
                     .border_b_1()
                     .border_color(c.border)
                     .child(
-                        div().text_xs().text_color(c.muted_foreground).child("Rounds"),
+                        div()
+                            .text_xs()
+                            .text_color(c.muted_foreground)
+                            .child("Rounds"),
                     )
                     .children(self.reviews.iter().map(|r| {
                         div()
@@ -356,9 +361,10 @@ impl Render for ReviewDetailView {
             )
             .when_some(self.error.clone(), |d, e| {
                 d.child(
-                    div().px_4().py_2().child(
-                        div().text_sm().text_color(t.danger).child(e),
-                    ),
+                    div()
+                        .px_4()
+                        .py_2()
+                        .child(div().text_sm().text_color(t.danger).child(e)),
                 )
             })
             .child(findings_col)

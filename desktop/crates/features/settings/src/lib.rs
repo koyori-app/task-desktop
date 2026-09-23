@@ -1,1 +1,5 @@
-//! Settings UI: general, notifications, appearance, keyboard, account.
+//! Settings screen (desktop.md §22).
+
+mod view;
+
+pub use view::{SettingsEvent, SettingsView};

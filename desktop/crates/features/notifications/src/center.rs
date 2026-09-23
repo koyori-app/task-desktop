@@ -3,9 +3,7 @@
 //! クリック時の内部遷移要求（§11）。OS 通知そのものは core::sync が出す。
 
 use api::NotificationsQuery;
-use api::spec::{
-    NotificationItem, NotificationKind, NotificationProject, NotificationTarget,
-};
+use api::spec::{NotificationItem, NotificationKind, NotificationProject, NotificationTarget};
 use chrono::{DateTime, Utc};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::Icon;
@@ -55,7 +53,7 @@ impl Filter {
             Self::All => true,
             Self::Unread => item.read_at.is_none(),
             Self::Task => item.notification_type.starts_with("task"),
-                // 本番の古い type（"assigned" 等）は task 系扱いにしない
+            // 本番の古い type（"assigned" 等）は task 系扱いにしない
             Self::Review => {
                 item.notification_type.starts_with("review")
                     || item.notification_type.starts_with("finding")
@@ -104,6 +102,12 @@ impl NotificationCenter {
     pub fn set_client(&mut self, client: api::Client, cx: &mut Context<Self>) {
         self.client = Some(client);
         self.refresh(cx);
+    }
+
+    /// ログアウト時に呼ぶ。以降の API 呼び出しを止める。
+    pub fn clear_client(&mut self, cx: &mut Context<Self>) {
+        self.client = None;
+        cx.notify();
     }
 
     /// 同期エンジンの catch-up で届いた新着を先頭へ差す（重複は弾く）。
@@ -293,12 +297,7 @@ impl NotificationCenter {
                     .when(!body.is_empty(), |d| {
                         d.child(div().text_xs().text_color(c.muted_foreground).child(body))
                     })
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(c.muted_foreground)
-                            .child(time),
-                    ),
+                    .child(div().text_xs().text_color(c.muted_foreground).child(time)),
             )
     }
 }
@@ -323,18 +322,16 @@ impl Render for NotificationCenter {
             list = list.child(self.row(item, ix, cx));
         }
         if self.items.is_empty() && !self.loading {
-            list = list.child(
-                div().flex_1().p_8().child(
-                    div()
-                        .text_sm()
-                        .text_color(c.muted_foreground)
-                        .child(if self.client.is_some() {
+            list =
+                list.child(div().flex_1().p_8().child(
+                    div().text_sm().text_color(c.muted_foreground).child(
+                        if self.client.is_some() {
                             "No notifications"
                         } else {
                             "Sign in to see notifications"
-                        }),
-                ),
-            );
+                        },
+                    ),
+                ));
         }
         if self.loading {
             list = list.child(
@@ -412,20 +409,18 @@ impl Render for NotificationCenter {
                             .cursor_pointer()
                             .when(active, |d| d.bg(c.accent).text_color(c.accent_foreground))
                             .when(!active, |d| {
-                                d.text_color(c.muted_foreground)
-                                    .hover(|s| s.bg(c.muted))
+                                d.text_color(c.muted_foreground).hover(|s| s.bg(c.muted))
                             })
                             .child(f.label())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.set_filter(*f, cx)
-                            }))
+                            .on_click(cx.listener(move |this, _, _, cx| this.set_filter(*f, cx)))
                     })),
             )
             .when_some(self.error.clone(), |d, e| {
                 d.child(
-                    div().px_4().py_2().child(
-                        div().text_sm().text_color(danger).child(e),
-                    ),
+                    div()
+                        .px_4()
+                        .py_2()
+                        .child(div().text_sm().text_color(danger).child(e)),
                 )
             })
             .child(list)
@@ -468,7 +463,10 @@ mod tests {
     #[test]
     fn relative_time_buckets() {
         let now = Utc::now();
-        assert_eq!(relative_time(&(now - chrono::Duration::seconds(10))), "just now");
+        assert_eq!(
+            relative_time(&(now - chrono::Duration::seconds(10))),
+            "just now"
+        );
         assert_eq!(relative_time(&(now - chrono::Duration::minutes(5))), "5m");
         assert_eq!(relative_time(&(now - chrono::Duration::hours(3))), "3h");
         assert_eq!(relative_time(&(now - chrono::Duration::days(2))), "2d");

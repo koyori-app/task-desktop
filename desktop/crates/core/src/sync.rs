@@ -58,7 +58,11 @@ pub struct NotificationEngine {
 
 impl NotificationEngine {
     /// `saved_cursor`: 設定に保存しておいた高水位（初回起動は None）。
-    pub fn new(client: api::Client, notifier: platform::Notifier, saved_cursor: Option<String>) -> Self {
+    pub fn new(
+        client: api::Client,
+        notifier: platform::Notifier,
+        saved_cursor: Option<String>,
+    ) -> Self {
         Self {
             client,
             notifier,

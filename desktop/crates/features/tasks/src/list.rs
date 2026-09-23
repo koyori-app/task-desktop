@@ -1,4 +1,4 @@
-﻿//! §15 一覧。My Tasks / Today / Upcoming / Project の 4 モードを 1 View で持つ。
+//! §15 一覧。My Tasks / Today / Upcoming / Project の 4 モードを 1 View で持つ。
 
 use std::collections::HashMap;
 
@@ -6,10 +6,10 @@ use api::types::{ProjectStatusResponse, UpdateTaskRequest};
 use api::{Client, MyTasksQuery, TasksQuery};
 use chrono::Utc;
 use gpui_kit::assets::IconName;
+use gpui_kit::component::Icon;
 use gpui_kit::component::Theme;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::Icon;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use uuid::Uuid;
@@ -56,9 +56,7 @@ impl TaskListView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let create_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("New task title…")
-        });
+        let create_input = cx.new(|cx| InputState::new(window, cx).placeholder("New task title…"));
         let sub = cx.subscribe(&create_input, |this, _, ev: &InputEvent, cx| {
             if matches!(ev, InputEvent::PressEnter { .. }) {
                 this.create_task(cx);
@@ -83,6 +81,12 @@ impl TaskListView {
         self.client = Some(client);
         self.tenant = tenant;
         self.reload(cx);
+    }
+
+    /// ログアウト時に呼ぶ。
+    pub fn clear_client(&mut self, cx: &mut Context<Self>) {
+        self.client = None;
+        cx.notify();
     }
 
     pub fn set_mode(&mut self, mode: ListMode, cx: &mut Context<Self>) {
@@ -128,22 +132,17 @@ impl TaskListView {
                         ..Default::default()
                     };
                     client.list_my_tasks(tenant, &q).await.map(|page| {
-                        let all: Vec<TaskRow> =
-                            page.tasks.iter().map(TaskRow::from_my).collect();
+                        let all: Vec<TaskRow> = page.tasks.iter().map(TaskRow::from_my).collect();
                         let today = Utc::now().date_naive();
                         let rows = match mode {
                             // §15: Today = 期限切れ含む今日まで。Upcoming = 明日以降。
                             ListMode::Today => all
                                 .into_iter()
-                                .filter(|r| {
-                                    r.due.map(|d| d.date_naive() <= today).unwrap_or(false)
-                                })
+                                .filter(|r| r.due.map(|d| d.date_naive() <= today).unwrap_or(false))
                                 .collect(),
                             ListMode::Upcoming => all
                                 .into_iter()
-                                .filter(|r| {
-                                    r.due.map(|d| d.date_naive() > today).unwrap_or(false)
-                                })
+                                .filter(|r| r.due.map(|d| d.date_naive() > today).unwrap_or(false))
                                 .collect(),
                             _ => all,
                         };
@@ -492,18 +491,16 @@ impl Render for TaskListView {
             list = list.child(self.row(row, ix, cx));
         }
         if self.rows.is_empty() && !self.loading {
-            list = list.child(
-                div().p_8().child(
-                    div()
-                        .text_sm()
-                        .text_color(c.muted_foreground)
-                        .child(if self.client.is_some() {
+            list =
+                list.child(div().p_8().child(
+                    div().text_sm().text_color(c.muted_foreground).child(
+                        if self.client.is_some() {
                             "No tasks"
                         } else {
                             "Sign in to see tasks"
-                        }),
-                ),
-            );
+                        },
+                    ),
+                ));
         }
         if self.loading {
             list = list.child(
@@ -549,9 +546,10 @@ impl Render for TaskListView {
             )
             .when_some(self.error.clone(), |d, e| {
                 d.child(
-                    div().px_4().py_2().child(
-                        div().text_sm().text_color(danger).child(e),
-                    ),
+                    div()
+                        .px_4()
+                        .py_2()
+                        .child(div().text_sm().text_color(danger).child(e)),
                 )
             })
             .child(list)

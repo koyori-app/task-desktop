@@ -11,6 +11,7 @@ platform = { path = "../platform" }
 feature-notifications = { path = "../features/notifications" }
 feature-tasks = { path = "../features/tasks" }
 feature-reviews = { path = "../features/reviews" }
+feature-settings = { path = "../features/settings" }
 uuid = { version = "1", features = ["serde", "v4"] }
 serde_json = "1"
 

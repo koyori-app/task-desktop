@@ -1,11 +1,11 @@
-﻿//! §15 Detail ペイン。Status / Priority / Assignee / DueDate / done の
+//! §15 Detail ペイン。Status / Priority / Assignee / DueDate / done の
 //! 編集とコメント表示・投稿。更新は Optimistic + rollback（§23）。
 
-use api::types::{
-    AssigneeInput, CommentThread, CreateCommentRequest, ProjectStatusResponse,
-    TaskDetailResponse, TaskPriority, UpdateTaskRequest, UserSummary,
-};
 use api::Client;
+use api::types::{
+    AssigneeInput, CommentThread, CreateCommentRequest, ProjectStatusResponse, TaskDetailResponse,
+    TaskPriority, UpdateTaskRequest, UserSummary,
+};
 use chrono::{DateTime, NaiveDate, Utc};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::Theme;
@@ -64,12 +64,8 @@ impl TaskDetailView {
             loading: false,
             error: None,
             title_input: cx.new(|cx| InputState::new(window, cx)),
-            due_input: cx.new(|cx| {
-                InputState::new(window, cx).placeholder("YYYY-MM-DD")
-            }),
-            comment_input: cx.new(|cx| {
-                InputState::new(window, cx).placeholder("Write a comment…")
-            }),
+            due_input: cx.new(|cx| InputState::new(window, cx).placeholder("YYYY-MM-DD")),
+            comment_input: cx.new(|cx| InputState::new(window, cx).placeholder("Write a comment…")),
             title_synced: None,
             clear_due_input: false,
         }
@@ -114,6 +110,12 @@ impl TaskDetailView {
         self.tenant = tenant;
     }
 
+    /// ログアウト時に呼ぶ。
+    pub fn clear_client(&mut self) {
+        self.client = None;
+        self.detail = None;
+    }
+
     fn is_done(&self) -> bool {
         self.detail
             .as_ref()
@@ -128,22 +130,14 @@ impl TaskDetailView {
 
     /// フィールド更新の共通経路。`patch` は表示用 detail への即時反映、
     /// `req` は UpdateTaskRequest への差分。失敗時は `undo` で戻す。
-    fn update<F, G>(
-        &mut self,
-        patch: F,
-        undo: G,
-        req: UpdateTaskRequest,
-        cx: &mut Context<Self>,
-    ) where
+    fn update<F, G>(&mut self, patch: F, undo: G, req: UpdateTaskRequest, cx: &mut Context<Self>)
+    where
         F: FnOnce(&mut TaskDetailResponse),
         G: FnOnce(&mut TaskDetailResponse) + Send + 'static,
     {
-        let (Some(client), Some(tenant), Some(project), Some(task)) = (
-            self.client.clone(),
-            self.tenant,
-            self.project,
-            self.task,
-        ) else {
+        let (Some(client), Some(tenant), Some(project), Some(task)) =
+            (self.client.clone(), self.tenant, self.project, self.task)
+        else {
             return;
         };
         if let Some(d) = self.detail.as_mut() {
@@ -195,9 +189,13 @@ impl TaskDetailView {
                 }
             })
             .or_else(|| {
-                self.statuses
-                    .iter()
-                    .find(|s| if done { !s.is_done_state } else { s.is_done_state })
+                self.statuses.iter().find(|s| {
+                    if done {
+                        !s.is_done_state
+                    } else {
+                        s.is_done_state
+                    }
+                })
             })
             .map(|s| s.id);
         if let Some(id) = target {
@@ -274,10 +272,8 @@ impl TaskDetailView {
                 cx.notify();
                 return;
             };
-            let dt = DateTime::<Utc>::from_naive_utc_and_offset(
-                d.and_hms_opt(0, 0, 0).unwrap(),
-                Utc,
-            );
+            let dt =
+                DateTime::<Utc>::from_naive_utc_and_offset(d.and_hms_opt(0, 0, 0).unwrap(), Utc);
             UpdateTaskRequest {
                 soft_deadline: Some(dt),
                 ..Default::default()
@@ -320,12 +316,9 @@ impl TaskDetailView {
         if body.is_empty() {
             return;
         }
-        let (Some(client), Some(tenant), Some(project), Some(task)) = (
-            self.client.clone(),
-            self.tenant,
-            self.project,
-            self.task,
-        ) else {
+        let (Some(client), Some(tenant), Some(project), Some(task)) =
+            (self.client.clone(), self.tenant, self.project, self.task)
+        else {
             return;
         };
         cx.spawn(async move |this, cx| {
@@ -372,9 +365,7 @@ impl TaskDetailView {
             .rounded_md()
             .text_xs()
             .cursor_pointer()
-            .when(active, |d| {
-                d.bg(c.accent).text_color(c.accent_foreground)
-            })
+            .when(active, |d| d.bg(c.accent).text_color(c.accent_foreground))
             .when(!active, |d| {
                 d.bg(c.secondary)
                     .text_color(c.secondary_foreground)
@@ -406,7 +397,8 @@ impl Render for TaskDetailView {
 
         if self.clear_due_input {
             self.clear_due_input = false;
-            self.due_input.update(cx, |s, cx| s.set_value("", window, cx));
+            self.due_input
+                .update(cx, |s, cx| s.set_value("", window, cx));
         }
         // title input は task が変わった時だけ detail のタイトルに同期。
         if self.title_synced != Some(detail.id) {
@@ -425,8 +417,7 @@ impl Render for TaskDetailView {
         let done = self.is_done();
         let cur_status = detail.status_id;
         let cur_priority = detail.priority;
-        let assignee_ids: Vec<Uuid> =
-            detail.assignees.iter().map(|a| a.user.id).collect();
+        let assignee_ids: Vec<Uuid> = detail.assignees.iter().map(|a| a.user.id).collect();
 
         let mut status_row = div().flex().flex_row().flex_wrap().gap_1();
         for s in self.statuses.clone() {
@@ -450,7 +441,13 @@ impl Render for TaskDetailView {
         }
 
         let mut assignee_row = div().flex().flex_row().flex_wrap().gap_1();
-        for u in self.assignables.iter().take(16).cloned().collect::<Vec<_>>() {
+        for u in self
+            .assignables
+            .iter()
+            .take(16)
+            .cloned()
+            .collect::<Vec<_>>()
+        {
             let active = assignee_ids.contains(&u.id);
             assignee_row = assignee_row.child(Self::chip(
                 format!("{}-as-{}", u.username, u.id.simple()),
@@ -495,7 +492,11 @@ impl Render for TaskDetailView {
                     .items_center()
                     .gap_2()
                     .child(
-                        div().text_xs().text_color(c.muted_foreground).w(px(70.)).child("Status"),
+                        div()
+                            .text_xs()
+                            .text_color(c.muted_foreground)
+                            .w(px(70.))
+                            .child("Status"),
                     )
                     .child(div().text_sm().child(status_name))
                     .child(
@@ -515,7 +516,11 @@ impl Render for TaskDetailView {
                     .items_center()
                     .gap_2()
                     .child(
-                        div().text_xs().text_color(c.muted_foreground).w(px(70.)).child("Due"),
+                        div()
+                            .text_xs()
+                            .text_color(c.muted_foreground)
+                            .w(px(70.))
+                            .child("Due"),
                     )
                     .child(div().w(px(140.)).child(Input::new(&self.due_input)))
                     .child(
@@ -532,7 +537,10 @@ impl Render for TaskDetailView {
                         .flex_col()
                         .gap_1()
                         .child(
-                            div().text_xs().text_color(c.muted_foreground).child("Description"),
+                            div()
+                                .text_xs()
+                                .text_color(c.muted_foreground)
+                                .child("Description"),
                         )
                         .child(div().text_sm().child(desc)),
                 )
@@ -549,7 +557,10 @@ impl Render for TaskDetailView {
                     .border_t_1()
                     .border_color(c.border)
                     .child(
-                        div().text_xs().text_color(c.muted_foreground).child("Comments"),
+                        div()
+                            .text_xs()
+                            .text_color(c.muted_foreground)
+                            .child("Comments"),
                     )
                     .children(self.comments.iter().map(|cm| {
                         div()
@@ -563,19 +574,18 @@ impl Render for TaskDetailView {
                                     .flex_row()
                                     .gap_2()
                                     .child(
-                                        div().text_xs().font_weight(FontWeight::SEMIBOLD)
+                                        div()
+                                            .text_xs()
+                                            .font_weight(FontWeight::SEMIBOLD)
                                             .child(cm.user.name.clone()),
                                     )
                                     .child(
-                                        div().text_xs().text_color(c.muted_foreground)
-                                            .child(cm.created_at.format("%Y-%m-%d %H:%M").to_string()),
+                                        div().text_xs().text_color(c.muted_foreground).child(
+                                            cm.created_at.format("%Y-%m-%d %H:%M").to_string(),
+                                        ),
                                     ),
                             )
-                            .child(
-                                div().text_sm().child(
-                                    cm.body.clone().unwrap_or_default(),
-                                ),
-                            )
+                            .child(div().text_sm().child(cm.body.clone().unwrap_or_default()))
                     }))
                     .child(
                         div()
@@ -583,16 +593,12 @@ impl Render for TaskDetailView {
                             .flex_row()
                             .items_center()
                             .gap_2()
-                            .child(
-                                div().flex_1().child(Input::new(&self.comment_input)),
-                            )
+                            .child(div().flex_1().child(Input::new(&self.comment_input)))
                             .child(
                                 Button::new("post-comment")
                                     .ghost()
                                     .label("Post")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.post_comment(cx)
-                                    })),
+                                    .on_click(cx.listener(|this, _, _, cx| this.post_comment(cx))),
                             ),
                     ),
             )
@@ -604,11 +610,6 @@ fn section(muted: Hsla, label: &'static str, row: Div) -> Div {
         .flex()
         .flex_col()
         .gap_1()
-        .child(
-            div()
-                .text_xs()
-                .text_color(muted)
-                .child(label),
-        )
+        .child(div().text_xs().text_color(muted).child(label))
         .child(row)
 }

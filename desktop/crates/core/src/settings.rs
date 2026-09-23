@@ -82,6 +82,7 @@ impl Default for Settings {
 
 /// `settings.json` の読み書き。書き込みは tmp → rename で中途半端な
 /// ファイルを残さない。
+#[derive(Clone)]
 pub struct SettingsStore {
     path: PathBuf,
 }
@@ -120,7 +121,6 @@ impl SettingsStore {
         Ok(())
     }
 }
-
 
 #[cfg(test)]
 mod tests {
