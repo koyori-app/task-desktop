@@ -9,7 +9,12 @@ use gpui_kit::assets::IconName;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
+use feature_notifications::{CenterEvent, NavTarget, NotificationCenter};
+
 use crate::theme::{self, KoyoriColors};
+
+/// §7: 通知ポーリング間隔。
+const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// 画面内の遷移先。通知の `target` → 内部ルート変換（§11）は
 /// feature 側に実装される。
@@ -36,14 +41,14 @@ pub enum ConnectionStatus {
 
 /// メインウィンドウの状態。MVP ではこの 1 Entity が全体を持ち、
 /// feature の View は Content / Detail の中身として後から差し込む。
-#[allow(dead_code)] // client / engine / tenants 等は feature 結線で読まれる
+#[allow(dead_code)] // client / tenants 等は feature 結線で読まれる
 pub struct AppShell {
     pub settings_store: core::SettingsStore,
     pub settings: core::Settings,
     /// ログイン済みなら Device Token 付きクライアント。
     pub client: Option<api::Client>,
-    /// 通知同期エンジン（TASKDESKTO-7 でポーリングを回す）。
-    pub engine: Option<core::NotificationEngine>,
+    /// §12 Notification Center。
+    pub center: Entity<NotificationCenter>,
     pub route: Route,
     pub unread_count: i64,
     pub connection: ConnectionStatus,
@@ -51,6 +56,7 @@ pub struct AppShell {
     pub projects: Vec<api::types::ProjectResponse>,
     /// Content / Detail の分割位置（§14: レイアウト状態はローカル保存）。
     pub resizable: Entity<ResizableState>,
+    _subs: Vec<Subscription>,
 }
 
 impl AppShell {
@@ -61,18 +67,92 @@ impl AppShell {
         engine: Option<core::NotificationEngine>,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self {
+        let center = cx.new(|_| NotificationCenter::new(client.clone()));
+        let sub = cx.subscribe(&center, |this, _center, ev: &CenterEvent, cx| {
+            let CenterEvent::Navigate(target) = ev;
+            this.navigate_target(target.clone(), cx);
+        });
+
+        let mut this = Self {
             settings,
             settings_store,
             client,
-            engine,
+            center,
             route: Route::MyTasks,
             unread_count: 0,
             connection: ConnectionStatus::Online,
             tenants: vec![],
             projects: vec![],
             resizable: cx.new(|_| ResizableState::default()),
+            _subs: vec![sub],
+        };
+        this.start_polling(engine, cx);
+        this
+    }
+
+    /// §7/§10: 30 秒ごとに catch-up。エンジンはこのタスクが所有する
+    /// （&mut を await 跨ぎで持てないため Entity に置かない）。
+    fn start_polling(&mut self, engine: Option<core::NotificationEngine>, cx: &mut Context<Self>) {
+        let Some(mut engine) = engine else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            loop {
+                let prefs = this
+                    .update(cx, |s, _| s.settings.notifications.clone())
+                    .unwrap_or_default();
+                match engine.tick(&prefs).await {
+                    Ok(outcome) => {
+                        let cursor = engine.last_cursor().map(str::to_owned);
+                        let _ = this.update(cx, |s, cx| s.apply_tick(outcome, cursor, cx));
+                    }
+                    Err(_) => {
+                        // §23: 接続失敗は非致命的。401 のログアウト処理は認証タスク側。
+                        let _ = this.update(cx, |s, cx| {
+                            s.connection = ConnectionStatus::Offline;
+                            cx.notify();
+                        });
+                    }
+                }
+                cx.background_executor().timer(POLL_INTERVAL).await;
+            }
+        })
+        .detach();
+    }
+
+    /// tick の結果を UI へ反映（unread badge / Center 新着 / 接続状態 / カーソル保存）。
+    fn apply_tick(
+        &mut self,
+        outcome: core::TickOutcome,
+        cursor: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.unread_count = outcome.unread_count;
+        self.connection = ConnectionStatus::Online;
+        if cursor.is_some() && cursor != self.settings.notification_cursor {
+            self.settings.notification_cursor = cursor;
+            let _ = self.settings_store.save(&self.settings);
         }
+        self.center
+            .update(cx, |c, cx| c.prepend_new(&outcome.new_items, cx));
+        cx.notify();
+    }
+
+    /// §11: 通知クリック → target を内部ルートへ変換。
+    /// project が取れない古い通知は遷移しない（既読化だけは済んでいる）。
+    fn navigate_target(&mut self, target: NavTarget, cx: &mut Context<Self>) {
+        let (Some(t), Some(project)) = (target.target, target.project.map(|p| p.id)) else {
+            return;
+        };
+        let route = match t {
+            api::spec::NotificationTarget::Task { task_id } => Route::TaskDetail {
+                project,
+                task: task_id,
+            },
+            api::spec::NotificationTarget::Review { .. }
+            | api::spec::NotificationTarget::ReviewFinding { .. } => Route::Reviews { project },
+        };
+        self.navigate(route, cx);
     }
 
     fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
@@ -212,12 +292,15 @@ impl AppShell {
     }
 
     fn content(&self, _colors: &KoyoriColors) -> impl IntoElement {
-        // feature crate の View が入る場所。骨組みではルート名だけ出す。
+        // feature crate の View が入る場所。Notifications は実装済み。
+        if self.route == Route::Notifications {
+            return div().flex_1().h_full().child(self.center.clone());
+        }
         let title: SharedString = match &self.route {
             Route::MyTasks => "My Tasks".into(),
             Route::Today => "Today".into(),
             Route::Upcoming => "Upcoming".into(),
-            Route::Notifications => "Notifications".into(),
+            Route::Notifications => unreachable!(),
             Route::Project { label, .. } => label.clone().into(),
             Route::TaskDetail { .. } => "Task".into(),
             Route::Reviews { .. } => "Reviews".into(),

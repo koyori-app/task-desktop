@@ -222,6 +222,7 @@ version = "0.0.0"
 dependencies = [
  "api",
  "core",
+ "feature-notifications",
  "gpui-kit",
  "platform",
  "serde_json",
@@ -1960,6 +1961,13 @@ dependencies = [
 [[package]]
 name = "feature-notifications"
 version = "0.0.0"
+dependencies = [
+ "api",
+ "chrono",
+ "core",
+ "gpui-kit",
+ "uuid",
+]
 
 [[package]]
 name = "feature-projects"

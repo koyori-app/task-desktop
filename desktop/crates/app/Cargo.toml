@@ -8,6 +8,7 @@ gpui-kit.workspace = true
 api = { path = "../api" }
 core = { path = "../core" }
 platform = { path = "../platform" }
+feature-notifications = { path = "../features/notifications" }
 uuid = { version = "1", features = ["serde", "v4"] }
 serde_json = "1"
 
