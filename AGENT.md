@@ -23,3 +23,18 @@ docs配下の仕様書を読むこと。その際task.mdは現在実装中であ
   を入れてから cargo を呼ぶと確実
 - taskCLI: `task` コマンド（`~\.local\bin`、config は `~\.config\task\config.yaml`）。api_url=https://task.koyori.app/api
 - Windows Defender のリアルタイム保護が target/ の .o 削除をロックして `os error 32` で稀にビルド失敗する。除外設定は要管理者権限
+
+## モックサーバー（ログイン前の動作確認用）
+
+Device Token フローが本番未デプロイの間は `crates/mock-api`（bin `koyori-mock`）で
+spec 準拠のモックを立てて動作確認できる。
+
+```powershell
+cargo run -p mock-api          # http://127.0.0.1:4199/api で待受（KOYORI_MOCK_PORT で変更可）
+$env:KOYORI_API_BASE='http://127.0.0.1:4199/api'; $env:KOYORI_DEV_TOKEN='dev'
+& .\target\debug\koyori.exe    # credential store を bypass してログイン済み状態で起動
+```
+
+- `KOYORI_DEV_TOKEN` があると main.rs が credential store ではなくその値で Client を作る
+- タスク/コメント/通知既読/Finding 状態変更はモックのメモリ上で反映される（再起動でリセット）
+- モック側の stderr に全リクエストがログされるので、アプリが何を叩いているか追える

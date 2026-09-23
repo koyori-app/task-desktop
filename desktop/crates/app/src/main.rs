@@ -38,10 +38,16 @@ fn main() {
             ]);
 
             // Device Token があればクライアントと同期エンジンを用意する。
-            // 無ければ未ログイン（認証画面の結線は別タスク）。
-            let (client, engine) = match core::auth::load_token() {
-                Ok(Some(token)) => {
-                    let client = api::Client::new(&settings.api_base, &token).ok();
+            // `KOYORI_API_BASE` / `KOYORI_DEV_TOKEN` があればそちらを優先する
+            // dev 経路（mock-api 等でログイン無しに動作確認する用途）。
+            let api_base = std::env::var("KOYORI_API_BASE")
+                .unwrap_or_else(|_| settings.api_base.clone());
+            let dev_token = std::env::var("KOYORI_DEV_TOKEN").ok();
+            let (client, engine) = match dev_token
+                .or_else(|| core::auth::load_token().ok().flatten())
+            {
+                Some(token) => {
+                    let client = api::Client::new(&api_base, &token).ok();
                     let engine = client.clone().map(|c| {
                         core::NotificationEngine::new(
                             c,
