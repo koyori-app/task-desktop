@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use crate::avatar::user_avatar;
-use crate::model::{due_timestamp, parse_hex_color, priority_label};
+use crate::model::{PRIORITIES, due_timestamp, parse_hex_color, priority_label};
 use crate::ui::status_pill;
 use api::Client;
 use api::types::{
@@ -23,15 +23,6 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use i18n::t;
 use uuid::Uuid;
-
-const PRIORITIES: [TaskPriority; 6] = [
-    TaskPriority::CriticalFire,
-    TaskPriority::Critical,
-    TaskPriority::High,
-    TaskPriority::Medium,
-    TaskPriority::Low,
-    TaskPriority::Trivial,
-];
 
 #[derive(Debug, Clone)]
 pub enum TaskDetailEvent {

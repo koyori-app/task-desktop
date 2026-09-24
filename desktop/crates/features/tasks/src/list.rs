@@ -2,197 +2,42 @@
 
 use std::collections::{HashMap, HashSet};
 
-use api::types::{ProjectStatusResponse, UpdateTaskRequest};
+use api::types::{ProjectStatusResponse, TaskPriority, UpdateTaskRequest};
 use api::{Client, MyTasksQuery, TasksQuery};
 use chrono::Local;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::Icon;
-use gpui_kit::component::IndexPath;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::list::{List, ListDelegate, ListEvent, ListItem, ListState};
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::{Disableable, Theme, WindowExt};
+use gpui_kit::component::{Disableable, Icon, Sizable, Size, Theme, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use i18n::t;
 use uuid::Uuid;
 
+use crate::avatar::user_avatar;
 use crate::model::{
-    DueTone, TaskRow, due_label, due_tone, parse_hex_color, priority_is_urgent, priority_label,
+    PRIORITIES, TaskRow, due_label, is_overdue, parse_hex_color, priority_color, priority_label,
 };
-use crate::ui::status_pill;
 
 const PAGE_SIZE: u32 = 50;
 
-struct TaskRows {
-    rows: Vec<TaskRow>,
-    completable: HashSet<Uuid>,
-    pending: HashSet<Uuid>,
-    owner: WeakEntity<TaskListView>,
-    loading: bool,
-    signed_in: bool,
-    more: bool,
-    empty_text: &'static str,
-}
+/// 列幅（Web の TASK_ROW_GRID: 名前 | 担当 7rem | 期限 7rem | 優先度 6rem）。
+const ASSIGNEE_W: f32 = 112.;
+const DUE_W: f32 = 112.;
+const PRIORITY_W: f32 = 104.;
+const ROW_H: f32 = 36.;
+/// 担当者のアイコンはこの数まで並べ、残りは「+N」。
+const MAX_AVATARS: usize = 3;
 
-impl ListDelegate for TaskRows {
-    type Item = ListItem;
-    fn items_count(&self, _: usize, _: &App) -> usize {
-        self.rows.len()
-    }
-    fn set_selected_index(
-        &mut self,
-        _: Option<IndexPath>,
-        _: &mut Window,
-        _: &mut Context<ListState<Self>>,
-    ) {
-    }
-    fn loading(&self, _: &App) -> bool {
-        self.loading && self.rows.is_empty()
-    }
-    fn has_more(&self, _: &App) -> bool {
-        self.more && !self.loading
-    }
-    fn load_more(&mut self, _: &mut Window, cx: &mut Context<ListState<Self>>) {
-        let owner = self.owner.clone();
-        cx.defer(move |cx| {
-            let _ = owner.update(cx, |view, cx| view.load_more(cx));
-        });
-    }
-    fn render_empty(
-        &mut self,
-        _: &mut Window,
-        cx: &mut Context<ListState<Self>>,
-    ) -> impl IntoElement {
-        let muted = Theme::global(cx).semantic_tokens().colors.muted_foreground;
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .gap_2()
-            .p_6()
-            .text_color(muted)
-            .child(Icon::new(IconName::Inbox).size_8())
-            .child(div().text_sm().child(if self.signed_in {
-                self.empty_text
-            } else {
-                t!("tasks.list.empty_signed_out")
-            }))
-    }
-    fn render_item(
-        &mut self,
-        ix: IndexPath,
-        _: &mut Window,
-        cx: &mut Context<ListState<Self>>,
-    ) -> Option<ListItem> {
-        let row = self.rows.get(ix.row)?;
-        let (c, danger, warning) = {
-            let t = Theme::global(cx);
-            (t.semantic_tokens().colors, t.danger, t.warning)
-        };
-        let id = row.id;
-        let owner = self.owner.clone();
-        Some(
-            ListItem::new(("task-row", ix.row))
-                .h(px(64.))
-                .w_full()
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .flex_1()
-                        .min_w_0()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .when(self.completable.contains(&row.project_id), |d| {
-                                    d.child(
-                                        Button::new(("done", ix.row))
-                                            .compact()
-                                            .ghost()
-                                            .disabled(self.pending.contains(&id))
-                                            .label(if row.is_done { "✓" } else { "○" })
-                                            .tooltip(if row.is_done {
-                                                t!("tasks.list.reopen")
-                                            } else {
-                                                t!("tasks.list.mark_done")
-                                            })
-                                            .on_click(move |_, _, cx| {
-                                                let _ = owner.update(cx, |view, cx| {
-                                                    if let Some(ix) = view
-                                                        .rows
-                                                        .iter()
-                                                        .position(|row| row.id == id)
-                                                    {
-                                                        view.toggle_done(ix, cx);
-                                                    }
-                                                });
-                                                cx.stop_propagation();
-                                            }),
-                                    )
-                                })
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .text_sm()
-                                        .text_ellipsis()
-                                        .when(row.is_done, |d| {
-                                            d.text_color(c.muted_foreground).line_through()
-                                        })
-                                        .child(row.title.clone()),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_3()
-                                .min_w_0()
-                                .text_xs()
-                                .text_color(c.muted_foreground)
-                                .child(div().flex_shrink_0().child(row.seq_key.clone()))
-                                .when(!row.status_name.is_empty(), |d| {
-                                    d.child(status_pill(
-                                        &row.status_name,
-                                        parse_hex_color(&row.status_color)
-                                            .unwrap_or(c.muted_foreground),
-                                    ))
-                                })
-                                .child(
-                                    div()
-                                        .flex_shrink_0()
-                                        .when(priority_is_urgent(row.priority), |d| {
-                                            d.text_color(danger).font_weight(FontWeight::MEDIUM)
-                                        })
-                                        .child(priority_label(row.priority)),
-                                )
-                                .when_some(row.due.filter(|_| !row.is_done), |d, due| {
-                                    let tone = due_tone(&due);
-                                    d.child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_1()
-                                            .min_w_0()
-                                            .when(tone == DueTone::Overdue, |d| {
-                                                d.text_color(danger)
-                                            })
-                                            .when(tone == DueTone::Today, |d| d.text_color(warning))
-                                            .child(Icon::new(IconName::Calendar).size_3())
-                                            .child(div().text_ellipsis().child(due_label(&due))),
-                                    )
-                                }),
-                        ),
-                ),
-        )
-    }
+/// ステータス 1 つ分の塊（Web の TaskGroup）。
+struct Group {
+    /// 折りたたみ状態の鍵。Project は status id、My Tasks はステータス名。
+    key: String,
+    name: String,
+    color: Option<Hsla>,
+    rows: Vec<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -225,11 +70,16 @@ pub struct TaskListView {
     /// （spawn タスクからは Window に触れないため）。
     clear_create_input: bool,
     creating: bool,
-    list_state: Entity<ListState<TaskRows>>,
     selected: Option<usize>,
+    /// 折りたたんだグループの鍵。
+    collapsed: HashSet<String>,
+    focus_handle: FocusHandle,
+    scroll_handle: ScrollHandle,
+    /// 直近の描画での (行 index, スクロール領域内の子 index)。キー操作で使う。
+    visible_rows: Vec<(usize, usize)>,
     generation: u64,
     context_generation: u64,
-    pending_done: HashSet<Uuid>,
+    pending: HashSet<Uuid>,
     /// mode 変更後に render 側で作成欄の placeholder を差し替えるフラグ。
     placeholder_dirty: bool,
     _subs: Vec<Subscription>,
@@ -250,36 +100,6 @@ impl TaskListView {
                 this.create_task(cx);
             }
         });
-        let owner = cx.weak_entity();
-        let list_state = cx.new(|cx| {
-            ListState::new(
-                TaskRows {
-                    rows: vec![],
-                    completable: HashSet::new(),
-                    pending: HashSet::new(),
-                    owner,
-                    loading: false,
-                    signed_in: false,
-                    more: false,
-                    empty_text: t!("tasks.list.empty_default"),
-                },
-                window,
-                cx,
-            )
-        });
-        let _ = list_state.read(cx).focus_handle(cx).tab_stop(true);
-        let list_sub = cx.subscribe(&list_state, |this, _, event: &ListEvent, cx| {
-            if let ListEvent::Select(ix) | ListEvent::Confirm(ix) = event {
-                this.selected = Some(ix.row);
-                if let Some(row) = this.rows.get(ix.row) {
-                    cx.emit(TaskListEvent::Select {
-                        project: row.project_id,
-                        task: row.id,
-                    });
-                }
-                cx.notify();
-            }
-        });
         Self {
             client,
             tenant,
@@ -293,13 +113,16 @@ impl TaskListView {
             create_input,
             clear_create_input: false,
             creating: false,
-            list_state,
             selected: None,
+            collapsed: HashSet::new(),
+            focus_handle: cx.focus_handle().tab_stop(true),
+            scroll_handle: ScrollHandle::new(),
+            visible_rows: vec![],
             generation: 0,
             context_generation: 0,
-            pending_done: HashSet::new(),
+            pending: HashSet::new(),
             placeholder_dirty: true,
-            _subs: vec![sub, list_sub],
+            _subs: vec![sub],
         }
     }
 
@@ -497,10 +320,16 @@ impl TaskListView {
     /// 各行の status_id が done ステータスかを解決する。
     /// 未取得のプロジェクトは statuses を取ってから再評価。
     fn resolve_done_states(&mut self, cx: &mut Context<Self>) {
+        // Project は空でもステータスのグループを出すので、行が無くても取る。
+        let current_project = match &self.mode {
+            ListMode::Project { id, .. } => Some(*id),
+            _ => None,
+        };
         let missing: Vec<Uuid> = self
             .rows
             .iter()
             .map(|r| r.project_id)
+            .chain(current_project)
             .filter(|p| !self.statuses.contains_key(p))
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
@@ -549,58 +378,64 @@ impl TaskListView {
         }
     }
 
-    /// §15 done スイッチ + Optimistic Update（失敗で rollback + エラー表示 §23）。
-    fn toggle_done(&mut self, ix: usize, cx: &mut Context<Self>) {
+    fn set_row_status(&mut self, id: Uuid, status: ProjectStatusResponse, cx: &mut Context<Self>) {
+        self.mutate_row(
+            id,
+            move |row| {
+                row.status_id = status.id;
+                row.status_name = status.name.clone();
+                row.status_color = status.color.clone();
+                row.is_done = status.is_done_state;
+            },
+            UpdateTaskRequest {
+                status_id: Some(status.id),
+                ..Default::default()
+            },
+            cx,
+        );
+    }
+
+    fn set_row_priority(&mut self, id: Uuid, priority: TaskPriority, cx: &mut Context<Self>) {
+        self.mutate_row(
+            id,
+            move |row| row.priority = priority,
+            UpdateTaskRequest {
+                priority: Some(priority),
+                ..Default::default()
+            },
+            cx,
+        );
+    }
+
+    /// 行からの変更 + Optimistic Update（失敗で rollback + エラー表示 §23）。
+    fn mutate_row(
+        &mut self,
+        id: Uuid,
+        apply: impl FnOnce(&mut TaskRow),
+        req: UpdateTaskRequest,
+        cx: &mut Context<Self>,
+    ) {
         let (Some(client), Some(tenant)) = (self.client.clone(), self.tenant) else {
             return;
         };
-        let Some(row) = self.rows.get(ix).cloned() else {
-            return;
-        };
-        if self.pending_done.contains(&row.id) {
+        if self.pending.contains(&id) {
             return;
         }
-        let Some(statuses) = self.statuses.get(&row.project_id) else {
+        let Some(row) = self.rows.iter_mut().find(|row| row.id == id) else {
             return;
         };
-        // done ↔ 最初の非 done（is_default 優先）を往復する。
-        let target = if row.is_done {
-            statuses
-                .iter()
-                .find(|s| !s.is_done_state && s.is_default)
-                .or_else(|| statuses.iter().find(|s| !s.is_done_state))
-        } else {
-            statuses
-                .iter()
-                .find(|s| s.is_done_state && s.is_default_done)
-                .or_else(|| statuses.iter().find(|s| s.is_done_state))
-        };
-        let Some(target) = target else {
-            return;
-        };
-        let (target_id, prev_id, prev_done) = (target.id, row.status_id, row.is_done);
-        let prev_name = row.status_name.clone();
-        let prev_color = row.status_color.clone();
-        if let Some(r) = self.rows.get_mut(ix) {
-            r.is_done = !prev_done;
-            r.status_id = target_id;
-            r.status_name = target.name.clone();
-            r.status_color = target.color.clone();
-        }
-        self.pending_done.insert(row.id);
+        let previous = row.clone();
+        apply(row);
+        self.pending.insert(id);
         let context_generation = self.context_generation;
         let generation = self.generation;
         cx.notify();
-        let req = UpdateTaskRequest {
-            status_id: Some(target_id),
-            ..Default::default()
-        };
         cx.spawn(async move |this, cx| {
             let res = client
-                .update_task(tenant, row.project_id, row.id, &req)
+                .update_task(tenant, previous.project_id, id, &req)
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.pending_done.remove(&row.id);
+                this.pending.remove(&id);
                 if this.context_generation != context_generation
                     || this.tenant != Some(tenant)
                     || this.client.is_none()
@@ -611,27 +446,123 @@ impl TaskListView {
                     // Locate by identity: the list may have been reloaded or reordered.
                     if this.generation != generation {
                         this.reload(cx);
-                    } else if let Some(r) = this.rows.iter_mut().find(|r| r.id == row.id) {
-                        r.is_done = prev_done;
-                        r.status_id = prev_id;
-                        r.status_name = prev_name;
-                        r.status_color = prev_color;
+                    } else if let Some(row) = this.rows.iter_mut().find(|row| row.id == id) {
+                        *row = previous;
                     }
                     this.error = Some(e.to_string());
                 } else if this
                     .selected
                     .and_then(|ix| this.rows.get(ix))
-                    .is_some_and(|selected| selected.id == row.id)
+                    .is_some_and(|selected| selected.id == id)
                 {
+                    // Detail を開き直して一覧の変更を反映する。
                     cx.emit(TaskListEvent::Select {
-                        project: row.project_id,
-                        task: row.id,
+                        project: previous.project_id,
+                        task: id,
                     });
                 }
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    fn select_row(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(row) = self.rows.get(ix) else {
+            return;
+        };
+        self.selected = Some(ix);
+        cx.emit(TaskListEvent::Select {
+            project: row.project_id,
+            task: row.id,
+        });
+        if let Some((_, child)) = self.visible_rows.iter().find(|(row, _)| *row == ix) {
+            self.scroll_handle.scroll_to_item(*child);
+        }
+        cx.notify();
+    }
+
+    /// ↑↓ で表示中の行を移動する（折りたたんだグループは飛ばす）。
+    fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        if self.visible_rows.is_empty() {
+            return;
+        }
+        let current = self
+            .selected
+            .and_then(|ix| self.visible_rows.iter().position(|(row, _)| *row == ix));
+        let next = match current {
+            Some(pos) => (pos as isize + delta).clamp(0, self.visible_rows.len() as isize - 1),
+            None if delta > 0 => 0,
+            None => self.visible_rows.len() as isize - 1,
+        } as usize;
+        self.select_row(self.visible_rows[next].0, cx);
+    }
+
+    fn toggle_group(&mut self, key: String, cx: &mut Context<Self>) {
+        if !self.collapsed.remove(&key) {
+            self.collapsed.insert(key);
+        }
+        cx.notify();
+    }
+
+    /// ステータスごとにまとめる。Project はそのプロジェクトの全ステータスを
+    /// 並び順どおりに出し（空のグループも出す、Web と同じ）、My Tasks は
+    /// プロジェクトをまたぐのでステータス名でまとめる。
+    fn groups(&self) -> Vec<Group> {
+        if let ListMode::Project { id, .. } = &self.mode
+            && let Some(statuses) = self.statuses.get(id)
+        {
+            let mut statuses = statuses.clone();
+            statuses.sort_by_key(|s| s.position);
+            let mut groups: Vec<Group> = statuses
+                .iter()
+                .map(|s| Group {
+                    key: s.id.to_string(),
+                    name: s.name.clone(),
+                    color: parse_hex_color(&s.color),
+                    rows: vec![],
+                })
+                .collect();
+            for (ix, row) in self.rows.iter().enumerate() {
+                let key = row.status_id.to_string();
+                match groups.iter_mut().find(|g| g.key == key) {
+                    Some(group) => group.rows.push(ix),
+                    None => groups.push(Group {
+                        key,
+                        name: row.status_name.clone(),
+                        color: parse_hex_color(&row.status_color),
+                        rows: vec![ix],
+                    }),
+                }
+            }
+            return groups;
+        }
+        let mut groups: Vec<(Group, (bool, i32))> = vec![];
+        for (ix, row) in self.rows.iter().enumerate() {
+            let key = row.status_name.to_lowercase();
+            if let Some((group, _)) = groups.iter_mut().find(|(g, _)| g.key == key) {
+                group.rows.push(ix);
+                continue;
+            }
+            // 完了系は後ろ、それ以外はプロジェクトでの並び順。
+            let rank = self
+                .statuses
+                .get(&row.project_id)
+                .and_then(|ss| ss.iter().find(|s| s.id == row.status_id))
+                .map(|s| (s.is_done_state, s.position))
+                .unwrap_or((row.is_done, i32::MAX));
+            groups.push((
+                Group {
+                    key,
+                    name: row.status_name.clone(),
+                    color: parse_hex_color(&row.status_color),
+                    rows: vec![ix],
+                },
+                rank,
+            ));
+        }
+        groups.sort_by_key(|(_, rank)| *rank);
+        groups.into_iter().map(|(group, _)| group).collect()
     }
 
     fn create_task(&mut self, cx: &mut Context<Self>) {
@@ -756,35 +687,183 @@ impl Render for TaskListView {
             self.create_input
                 .update(cx, |s, cx| s.set_placeholder(placeholder, window, cx));
         }
-        let (c, danger) = {
+        let (c, danger, hover, selected_bg) = {
             let t = Theme::global(cx);
-            (t.semantic_tokens().colors, t.danger)
+            (
+                t.semantic_tokens().colors,
+                t.danger,
+                t.secondary.opacity(0.5),
+                t.secondary,
+            )
         };
+        let muted = c.muted_foreground;
         let empty_text = match self.mode {
             ListMode::MyTasks => t!("tasks.list.empty_my"),
             ListMode::Today => t!("tasks.list.empty_today"),
             ListMode::Upcoming => t!("tasks.list.empty_upcoming"),
             ListMode::Project { .. } => t!("tasks.list.empty_project"),
         };
+        // My Tasks は全て自分の担当なので担当列を出さない。
+        let show_assignee = matches!(self.mode, ListMode::Project { .. });
+        let owner = cx.entity().downgrade();
 
-        self.list_state.update(cx, |state, cx| {
-            let delegate = state.delegate_mut();
-            delegate.rows = self.rows.clone();
-            delegate.completable = self
-                .statuses
-                .iter()
-                .filter(|(_, statuses)| statuses.iter().any(|s| s.is_done_state))
-                .map(|(id, _)| *id)
-                .collect();
-            delegate.pending = self.pending_done.clone();
-            delegate.loading = self.loading;
-            delegate.signed_in = self.client.is_some();
-            delegate.more = self.next_cursor.is_some();
-            delegate.empty_text = empty_text;
-            state.set_selected_index(self.selected.map(IndexPath::new), window, cx);
-            cx.notify();
-        });
-        let list = List::new(&self.list_state);
+        let groups = self.groups();
+        let mut body: Vec<AnyElement> = vec![];
+        let mut visible_rows = vec![];
+        for group in &groups {
+            let collapsed = self.collapsed.contains(&group.key);
+            let color = group.color.unwrap_or(muted);
+            let key = group.key.clone();
+            body.push(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .h(px(ROW_H))
+                    .px_2()
+                    .mt_2()
+                    .child(
+                        Button::new(SharedString::from(format!("group-{}", group.key)))
+                            .ghost()
+                            .xsmall()
+                            .icon(if collapsed {
+                                IconName::ChevronRight
+                            } else {
+                                IconName::ChevronDown
+                            })
+                            .tooltip(if collapsed {
+                                t!("tasks.list.group_expand", name = group.name)
+                            } else {
+                                t!("tasks.list.group_collapse", name = group.name)
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.toggle_group(key.clone(), cx)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1p5()
+                            .h(px(20.))
+                            .px_2()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(color)
+                            .text_size(px(11.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(div().size(px(8.)).rounded_full().bg(color))
+                            .child(if group.name.is_empty() {
+                                "—".to_string()
+                            } else {
+                                group.name.clone()
+                            }),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(group.rows.len().to_string()),
+                    )
+                    .into_any_element(),
+            );
+            if collapsed {
+                continue;
+            }
+            if group.rows.is_empty() {
+                body.push(
+                    div()
+                        .px_3()
+                        .py_2()
+                        .text_sm()
+                        .text_color(muted)
+                        .child(t!("tasks.list.group_empty"))
+                        .into_any_element(),
+                );
+                continue;
+            }
+            for &ix in &group.rows {
+                visible_rows.push((ix, body.len()));
+                let row = self.rows[ix].clone();
+                body.push(
+                    self.render_row(
+                        ix,
+                        row,
+                        show_assignee,
+                        &owner,
+                        muted,
+                        danger,
+                        hover,
+                        selected_bg,
+                        c.border,
+                        cx,
+                    )
+                    .into_any_element(),
+                );
+            }
+        }
+        if self.next_cursor.is_some() {
+            body.push(
+                div()
+                    .px_2()
+                    .py_1()
+                    .child(
+                        Button::new("load-more")
+                            .ghost()
+                            .compact()
+                            .label(t!("tasks.list.more"))
+                            .disabled(self.loading)
+                            .on_click(cx.listener(|this, _, _, cx| this.load_more(cx))),
+                    )
+                    .into_any_element(),
+            );
+        }
+        self.visible_rows = visible_rows;
+
+        let empty = if self.client.is_none() {
+            Some(t!("tasks.list.empty_signed_out"))
+        } else if self.rows.is_empty() && self.loading {
+            Some(t!("tasks.list.loading"))
+        } else if groups.is_empty() {
+            Some(empty_text)
+        } else {
+            None
+        };
+
+        let header = div()
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .h(px(32.))
+            .px_2()
+            .border_b_1()
+            .border_color(c.border)
+            .text_xs()
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(muted)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .px_2()
+                    .child(t!("tasks.list.column.name")),
+            )
+            .when(show_assignee, |d| {
+                d.child(
+                    div()
+                        .w(px(ASSIGNEE_W))
+                        .px_2()
+                        .child(t!("tasks.list.column.assignee")),
+                )
+            })
+            .child(div().w(px(DUE_W)).px_2().child(t!("tasks.list.column.due")))
+            .child(
+                div()
+                    .w(px(PRIORITY_W))
+                    .px_2()
+                    .child(t!("tasks.list.column.priority")),
+            );
+
         div()
             .id("task-list-view")
             .flex()
@@ -803,11 +882,7 @@ impl Render for TaskListView {
                     .py_2()
                     .border_b_1()
                     .border_color(c.border)
-                    .child(
-                        Icon::new(IconName::Plus)
-                            .size_4()
-                            .text_color(c.muted_foreground),
-                    )
+                    .child(Icon::new(IconName::Plus).size_4().text_color(muted))
                     .child(
                         div().flex_1().min_w_0().child(
                             Input::new(&self.create_input)
@@ -835,6 +910,227 @@ impl Render for TaskListView {
                         .child(div().text_sm().text_color(danger).child(e)),
                 )
             })
-            .child(div().flex_1().min_h_0().child(list))
+            .map(|d| match empty {
+                Some(text) => d.child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .gap_2()
+                        .p_6()
+                        .text_color(muted)
+                        .child(Icon::new(IconName::Inbox).size_8())
+                        .child(div().text_sm().child(text)),
+                ),
+                None => d.child(header).child(
+                    div()
+                        .id("task-rows")
+                        .track_focus(&self.focus_handle)
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll_handle)
+                        .pb_4()
+                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                            match event.keystroke.key.as_str() {
+                                "up" => this.move_selection(-1, cx),
+                                "down" => this.move_selection(1, cx),
+                                _ => return,
+                            }
+                            cx.stop_propagation();
+                        }))
+                        .children(body),
+                ),
+            })
     }
+}
+
+impl TaskListView {
+    #[allow(clippy::too_many_arguments)] // 行の描画に使う色をまとめて受け取る
+    fn render_row(
+        &self,
+        ix: usize,
+        row: TaskRow,
+        show_assignee: bool,
+        owner: &WeakEntity<Self>,
+        muted: Hsla,
+        danger: Hsla,
+        hover: Hsla,
+        selected_bg: Hsla,
+        border: Hsla,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let id = row.id;
+        let busy = self.pending.contains(&id);
+        let status_color = parse_hex_color(&row.status_color).unwrap_or(muted);
+        let statuses = self
+            .statuses
+            .get(&row.project_id)
+            .cloned()
+            .unwrap_or_default();
+
+        // 名前の左の丸からステータスを変える（Web と同じ）。
+        let status_owner = owner.clone();
+        let current_status = row.status_id;
+        let status_button = Button::new(("row-status", ix))
+            .ghost()
+            .xsmall()
+            .disabled(busy || statuses.is_empty())
+            .tooltip(t!("tasks.list.status_tooltip", name = row.status_name))
+            .child(
+                div()
+                    .size(px(16.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .border_2()
+                    .border_color(status_color)
+                    .child(div().size(px(6.)).rounded_full().bg(status_color)),
+            )
+            .dropdown_menu(move |mut menu, _, _| {
+                for status in &statuses {
+                    let (status, owner) = (status.clone(), status_owner.clone());
+                    menu = menu.item(
+                        PopupMenuItem::new(status.name.clone())
+                            .checked(status.id == current_status)
+                            .on_click(move |_, _, cx| {
+                                let status = status.clone();
+                                let _ = owner
+                                    .update(cx, |this, cx| this.set_row_status(id, status, cx));
+                            }),
+                    );
+                }
+                menu
+            });
+
+        let priority_owner = owner.clone();
+        let current_priority = row.priority;
+        let priority_button = Button::new(("row-priority", ix))
+            .ghost()
+            .compact()
+            .disabled(busy)
+            .child(priority_chip(current_priority))
+            .dropdown_menu(move |mut menu, _, _| {
+                for priority in PRIORITIES {
+                    let owner = priority_owner.clone();
+                    menu = menu.item(
+                        PopupMenuItem::element(move |_, _| priority_chip(priority))
+                            .checked(priority == current_priority)
+                            .on_click(move |_, _, cx| {
+                                let _ = owner
+                                    .update(cx, |this, cx| this.set_row_priority(id, priority, cx));
+                            }),
+                    );
+                }
+                menu
+            });
+
+        let extra = row.assignees.len().saturating_sub(MAX_AVATARS);
+        let avatars: Vec<_> = row
+            .assignees
+            .iter()
+            .take(MAX_AVATARS)
+            .map(|a| user_avatar(&a.name, a.avatar_url.as_deref(), Size::Small, cx))
+            .collect();
+
+        let selected = self.selected == Some(ix);
+        div()
+            .id(("task-row", ix))
+            .flex()
+            .items_center()
+            .h(px(ROW_H))
+            .px_2()
+            .border_b_1()
+            .border_color(border.opacity(0.6))
+            .cursor_pointer()
+            .when(selected, |d| d.bg(selected_bg))
+            .when(!selected, |d| d.hover(|d| d.bg(hover)))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                window.focus(&this.focus_handle, cx);
+                this.select_row(ix, cx);
+            }))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .items_center()
+                    .gap_2()
+                    .px_1()
+                    .child(status_button)
+                    .child(
+                        div()
+                            .min_w_0()
+                            .text_sm()
+                            .text_ellipsis()
+                            .when(row.is_done, |d| d.text_color(muted))
+                            .child(row.title.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(row.seq_key.clone()),
+                    ),
+            )
+            .when(show_assignee, |d| {
+                d.child(
+                    div()
+                        .w(px(ASSIGNEE_W))
+                        .px_2()
+                        .flex()
+                        .items_center()
+                        .children(avatars.into_iter().enumerate().map(|(ix, avatar)| {
+                            div().when(ix > 0, |d| d.ml(px(-6.))).child(avatar)
+                        }))
+                        .when(extra > 0, |d| {
+                            d.child(
+                                div()
+                                    .ml_1()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(format!("+{extra}")),
+                            )
+                        }),
+                )
+            })
+            .child(
+                div()
+                    .w(px(DUE_W))
+                    .px_2()
+                    .text_sm()
+                    .when_some(row.due, |d, due| {
+                        d.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1p5()
+                                .text_color(if is_overdue(&due) && !row.is_done {
+                                    danger
+                                } else {
+                                    muted
+                                })
+                                .child(Icon::new(IconName::Calendar).size_4())
+                                .child(div().text_ellipsis().child(due_label(&due))),
+                        )
+                    }),
+            )
+            .child(div().w(px(PRIORITY_W)).px_1().child(priority_button))
+    }
+}
+
+/// 旗アイコン + 優先度名。アイコンと文字の両方に優先度の色を載せる（Web と同じ）。
+fn priority_chip(priority: TaskPriority) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_1p5()
+        .text_sm()
+        .text_color(priority_color(priority))
+        .child(Icon::new(IconName::Flag).size_4())
+        .child(priority_label(priority))
 }

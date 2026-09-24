@@ -2,6 +2,7 @@
 
 use api::types::{MyTaskItem, TaskPriority, TaskResponse};
 use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
+use gpui_kit::Hsla;
 use i18n::t;
 use uuid::Uuid;
 
@@ -20,7 +21,25 @@ pub struct TaskRow {
     pub due: Option<DateTime<Utc>>,
     /// statuses ロード後に解決。未解決は false（スイッチ非表示扱い）。
     pub is_done: bool,
+    /// 担当者。My Tasks の API は返さない（全て自分の担当）ので空。
+    pub assignees: Vec<RowAssignee>,
 }
+
+#[derive(Debug, Clone)]
+pub struct RowAssignee {
+    pub name: String,
+    pub avatar_url: Option<String>,
+}
+
+/// 一覧・Detail で並べる優先度の順（Web と同じ）。
+pub const PRIORITIES: [TaskPriority; 6] = [
+    TaskPriority::CriticalFire,
+    TaskPriority::Critical,
+    TaskPriority::High,
+    TaskPriority::Medium,
+    TaskPriority::Low,
+    TaskPriority::Trivial,
+];
 
 impl TaskRow {
     pub fn from_my(item: &MyTaskItem) -> Self {
@@ -36,6 +55,7 @@ impl TaskRow {
             status_color: item.status.color.clone(),
             due: item.soft_deadline.or(item.hard_deadline),
             is_done: false,
+            assignees: vec![],
         }
     }
 
@@ -53,6 +73,14 @@ impl TaskRow {
             status_color: String::new(),
             due: item.soft_deadline.or(item.hard_deadline),
             is_done: false,
+            assignees: item
+                .assignees
+                .iter()
+                .map(|a| RowAssignee {
+                    name: a.user.username.clone(),
+                    avatar_url: a.user.avatar_url.clone(),
+                })
+                .collect(),
         }
     }
 }
@@ -67,34 +95,25 @@ pub fn parse_hex_color(s: &str) -> Option<gpui_kit::Hsla> {
     Some(gpui_kit::rgb(rgb).into())
 }
 
-/// "today" / "tomorrow" / "2026-09-24" / "3d ago" 程度の簡易表記。
+/// 期限の表記（Web の `formatDeadline` と同じ規則）:
+/// 今日 / N日超過 / N日後（7 日以内）/ それより先は月日。
 pub fn due_label(due: &DateTime<Utc>) -> String {
-    let today = Local::now().date_naive();
+    due_label_on(due, Local::now().date_naive())
+}
+
+fn due_label_on(due: &DateTime<Utc>, today: NaiveDate) -> String {
     let d = due.with_timezone(&Local).date_naive();
     match (d - today).num_days() {
         0 => t!("tasks.due.today").into(),
-        1 => t!("tasks.due.tomorrow").into(),
         n if n < 0 => t!("tasks.due.overdue", days = -n),
-        _ => d.format("%Y-%m-%d").to_string(),
+        n if n <= 7 => t!("tasks.due.in_days", days = n),
+        _ => d.format(t!("tasks.due.month_day")).to_string(),
     }
 }
 
-/// 期限の強調度。一覧で overdue / today を色分けする。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DueTone {
-    Overdue,
-    Today,
-    Later,
-}
-
-pub fn due_tone(due: &DateTime<Utc>) -> DueTone {
-    let today = Local::now().date_naive();
-    let d = due.with_timezone(&Local).date_naive();
-    match d.cmp(&today) {
-        std::cmp::Ordering::Less => DueTone::Overdue,
-        std::cmp::Ordering::Equal => DueTone::Today,
-        std::cmp::Ordering::Greater => DueTone::Later,
-    }
+/// 期限切れか（今日の期限はまだ切れていない扱い）。
+pub fn is_overdue(due: &DateTime<Utc>) -> bool {
+    due.with_timezone(&Local).date_naive() < Local::now().date_naive()
 }
 
 /// API の enum 名（`CriticalFire` 等）をそのまま出さない表示名。
@@ -109,12 +128,17 @@ pub fn priority_label(priority: TaskPriority) -> &'static str {
     }
 }
 
-/// 一覧で目立たせる優先度。
-pub fn priority_is_urgent(priority: TaskPriority) -> bool {
-    matches!(
-        priority,
-        TaskPriority::CriticalFire | TaskPriority::Critical
-    )
+/// 優先度の色（Web の `PRIORITY_CONFIG` と同じ値）。
+pub fn priority_color(priority: TaskPriority) -> Hsla {
+    let hex = match priority {
+        TaskPriority::CriticalFire => 0xdc2626,
+        TaskPriority::Critical => 0xef4444,
+        TaskPriority::High => 0xf97316,
+        TaskPriority::Medium => 0xeab308,
+        TaskPriority::Low => 0x6b7280,
+        TaskPriority::Trivial => 0x9ca3af,
+    };
+    gpui_kit::rgb(hex).into()
 }
 
 /// A date entered by the user belongs to their local calendar day.
@@ -145,14 +169,42 @@ mod tests {
     }
 
     #[test]
-    fn due_tone_follows_local_calendar_day() {
-        let now = Utc::now();
-        assert_eq!(due_tone(&now), DueTone::Today);
+    fn due_label_matches_web_rules() {
+        let today = Local::now().date_naive();
+        let at = |days: i64| {
+            Local
+                .from_local_datetime(
+                    &(today + chrono::Duration::days(days))
+                        .and_hms_opt(12, 0, 0)
+                        .unwrap(),
+                )
+                .earliest()
+                .unwrap()
+                .with_timezone(&Utc)
+        };
+        assert_eq!(due_label_on(&at(0), today), t!("tasks.due.today"));
         assert_eq!(
-            due_tone(&(now - chrono::Duration::days(2))),
-            DueTone::Overdue
+            due_label_on(&at(-3), today),
+            t!("tasks.due.overdue", days = 3)
         );
-        assert_eq!(due_tone(&(now + chrono::Duration::days(2))), DueTone::Later);
+        assert_eq!(
+            due_label_on(&at(1), today),
+            t!("tasks.due.in_days", days = 1)
+        );
+        assert_eq!(
+            due_label_on(&at(7), today),
+            t!("tasks.due.in_days", days = 7)
+        );
+        let later = at(30);
+        assert_eq!(
+            due_label_on(&later, today),
+            later
+                .with_timezone(&Local)
+                .format(t!("tasks.due.month_day"))
+                .to_string()
+        );
+        assert!(is_overdue(&at(-1)));
+        assert!(!is_overdue(&at(0)));
     }
 
     #[test]
@@ -165,8 +217,6 @@ mod tests {
             priority_label(TaskPriority::CriticalFire),
             "tasks.priority.critical_fire"
         );
-        assert!(priority_is_urgent(TaskPriority::Critical));
-        assert!(!priority_is_urgent(TaskPriority::High));
     }
 
     #[test]

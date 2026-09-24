@@ -2,14 +2,21 @@
 # 1 行 1 キーで ja / en を並べる。引数は {name} で埋め込む。
 
 
-"list.empty_default" = { ja = "タスクはありません", en = "No tasks" }
+"list.column.name" = { ja = "タスク", en = "Task" }
+"list.column.assignee" = { ja = "担当", en = "Assignee" }
+"list.column.due" = { ja = "期限", en = "Due" }
+"list.column.priority" = { ja = "優先度", en = "Priority" }
+"list.group_empty" = { ja = "タスクはありません", en = "No tasks" }
+"list.group_collapse" = { ja = "{name} を折りたたむ", en = "Collapse {name}" }
+"list.group_expand" = { ja = "{name} を展開", en = "Expand {name}" }
+"list.status_tooltip" = { ja = "ステータス: {name}", en = "Status: {name}" }
+"list.more" = { ja = "もっと見る", en = "Load more" }
+"list.loading" = { ja = "読み込み中…", en = "Loading…" }
 "list.empty_my" = { ja = "担当のタスクはありません", en = "No tasks assigned to you" }
 "list.empty_today" = { ja = "今日が期限のタスクはありません", en = "Nothing due today" }
 "list.empty_upcoming" = { ja = "明日以降が期限のタスクはありません", en = "Nothing due after today" }
 "list.empty_project" = { ja = "このプロジェクトにはまだタスクがありません", en = "No tasks in this project yet" }
 "list.empty_signed_out" = { ja = "サインインするとタスクが表示されます", en = "Sign in to see tasks" }
-"list.mark_done" = { ja = "完了にする", en = "Mark done" }
-"list.reopen" = { ja = "未完了に戻す", en = "Reopen task" }
 "list.new_task_placeholder" = { ja = "新しいタスクのタイトル…", en = "New task title…" }
 "list.add_to_project" = { ja = "{key} にタスクを追加…", en = "Add a task to {key}…" }
 "list.add_to_personal" = { ja = "個人プロジェクトにタスクを追加…", en = "Add a task to your personal project…" }
@@ -49,13 +56,14 @@
 "detail.post" = { ja = "投稿", en = "Post" }
 "detail.posting" = { ja = "投稿中…", en = "Posting…" }
 
-"priority.critical_fire" = { ja = "重大 🔥", en = "Critical 🔥" }
+"priority.critical_fire" = { ja = "緊急", en = "Urgent" }
 "priority.critical" = { ja = "重大", en = "Critical" }
 "priority.high" = { ja = "高", en = "High" }
 "priority.medium" = { ja = "中", en = "Medium" }
 "priority.low" = { ja = "低", en = "Low" }
-"priority.trivial" = { ja = "最低", en = "Trivial" }
+"priority.trivial" = { ja = "些細", en = "Trivial" }
 
 "due.today" = { ja = "今日", en = "today" }
-"due.tomorrow" = { ja = "明日", en = "tomorrow" }
+"due.in_days" = { ja = "{days}日後", en = "in {days}d" }
+"due.month_day" = { ja = "%-m月%-d日", en = "%b %-d" }
 "due.overdue" = { ja = "{days}日超過", en = "{days}d overdue" }
