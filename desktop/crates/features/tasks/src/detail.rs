@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use crate::avatar::user_avatar;
-use crate::markdown::MarkdownBlocks;
+use crate::markdown::{MarkdownBlocks, hard_line_breaks};
 use crate::model::{PRIORITIES, due_timestamp, parse_hex_color, priority_label};
 use crate::ui::status_pill;
 use api::Client;
@@ -1005,7 +1005,7 @@ impl Render for TaskDetailView {
                                     .child(
                                         TextView::markdown(
                                             ("task-comment", ix),
-                                            cm.body.clone().unwrap_or_default(),
+                                            hard_line_breaks(&cm.body.clone().unwrap_or_default()),
                                         )
                                         .w_full(),
                                     )
@@ -1036,9 +1036,12 @@ impl Render for TaskDetailView {
                                                         "comment-reply-{}",
                                                         reply.id
                                                     )),
-                                                    reply.body.clone().unwrap_or_else(|| {
-                                                        t!("tasks.detail.deleted_comment").into()
-                                                    }),
+                                                    hard_line_breaks(
+                                                        &reply.body.clone().unwrap_or_else(|| {
+                                                            t!("tasks.detail.deleted_comment")
+                                                                .into()
+                                                        }),
+                                                    ),
                                                 )
                                                 .w_full(),
                                             )

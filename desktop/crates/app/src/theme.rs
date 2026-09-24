@@ -2,7 +2,7 @@
 //! Feature は色を直書きせず [`colors`] から取る。
 
 use gpui_kit::component::{Theme, ThemeMode};
-use gpui_kit::{App, Hsla, Window};
+use gpui_kit::{App, Hsla, Window, rgb};
 
 /// desktop.md §21 のトークン名に合わせた面。
 /// 実体は gpui-component の Theme / SemanticThemeTokens。
@@ -46,5 +46,19 @@ pub fn apply(appearance: core::settings::Appearance, window: Option<&mut Window>
         core::settings::Appearance::Dark => ThemeMode::Dark,
         core::settings::Appearance::System => ThemeMode::from(cx.window_appearance()),
     };
-    Theme::change(mode, window, cx);
+    Theme::change(mode, None, cx);
+    // リンクは既定だと primary（黒）で本文と見分けにくいので、Web と同じ青にする。
+    let link = if mode.is_dark() {
+        rgb(0x4493f8)
+    } else {
+        rgb(0x0969da)
+    };
+    let theme = Theme::global_mut(cx);
+    theme.link = link.into();
+    theme.link_hover = link.into();
+    theme.link_active = link.into();
+    Theme::sync_base(cx);
+    if let Some(window) = window {
+        window.refresh();
+    }
 }
