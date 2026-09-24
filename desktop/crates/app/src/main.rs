@@ -51,6 +51,15 @@ fn main() {
             cx.bind_keys([
                 KeyBinding::new(&palette_key, shell::OpenPalette, None),
                 KeyBinding::new(&search_key, shell::OpenQuickSearch, None),
+                KeyBinding::new(
+                    if cfg!(target_os = "macos") {
+                        "cmd-,"
+                    } else {
+                        "ctrl-,"
+                    },
+                    shell::OpenSettings,
+                    None,
+                ),
             ]);
 
             // Device Token があればクライアントと同期エンジンを用意する。

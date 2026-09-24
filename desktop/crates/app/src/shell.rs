@@ -2,14 +2,13 @@
 //! Header / Sidebar / Content / Detail。中身は feature crate が後から埋める。
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::badge::Badge;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::command::CommandItem;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel};
 use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenuItem};
 use gpui_kit::component::tab::{Tab, TabBar};
-use gpui_kit::component::{Icon, IndexPath, Root, WindowExt};
+use gpui_kit::component::{Icon, IndexPath, Root, Selectable, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
@@ -27,7 +26,7 @@ const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 const TRAY_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(300);
 
 // §20 Command Palette (Ctrl+K) / Quick Search (Ctrl+P)。
-actions!(shell, [OpenPalette, OpenQuickSearch]);
+actions!(shell, [OpenPalette, OpenQuickSearch, OpenSettings]);
 
 /// パレット項目が確定した時に実行する内部アクション。
 #[derive(Debug, Clone)]
@@ -108,6 +107,8 @@ pub struct AppShell {
     /// §22 Settings。
     pub settings_view: Entity<SettingsView>,
     pub route: Route,
+    /// Settings を閉じた時に戻る画面。
+    route_before_settings: Route,
     pub unread_count: i64,
     pub connection: ConnectionStatus,
     pub tenants: Vec<api::types::TenantListItemResponse>,
@@ -231,6 +232,7 @@ impl AppShell {
                 SettingsEvent::LoggedOut => {
                     this.end_session(false, cx);
                 }
+                SettingsEvent::Close => this.close_settings(cx),
             },
         );
 
@@ -247,6 +249,7 @@ impl AppShell {
             review_list,
             review_detail,
             route: Route::MyTasks,
+            route_before_settings: Route::MyTasks,
             unread_count: 0,
             connection: ConnectionStatus::Online,
             tenants: vec![],
@@ -719,8 +722,26 @@ impl AppShell {
             }
             _ => {}
         }
+        if route == Route::Settings && self.route != Route::Settings {
+            self.route_before_settings = self.route.clone();
+        }
         self.route = route;
         cx.notify();
+    }
+
+    fn close_settings(&mut self, cx: &mut Context<Self>) {
+        if self.route == Route::Settings {
+            let route = std::mem::replace(&mut self.route_before_settings, Route::MyTasks);
+            self.navigate(route, cx);
+        }
+    }
+
+    fn toggle_settings(&mut self, cx: &mut Context<Self>) {
+        if self.route == Route::Settings {
+            self.close_settings(cx);
+        } else {
+            self.navigate(Route::Settings, cx);
+        }
     }
 
     /// 表示中のプロジェクト（Tasks / Reviews / Task 詳細のいずれでも）。
@@ -780,14 +801,11 @@ impl AppShell {
             .collect();
 
         let unread = self.unread_count;
+        let danger = colors.danger;
         let notifications = SidebarMenuItem::new("Notifications")
             .icon(IconName::Bell)
             .active(self.route == Route::Notifications)
-            .suffix(move |_, _| {
-                div().when(unread > 0, |d| {
-                    d.child(Badge::new().count(unread.max(0) as usize))
-                })
-            })
+            .suffix(move |_, _| div().when(unread > 0, |d| d.child(count_pill(unread, danger))))
             .on_click(cx.listener(|this, _, _, cx| this.navigate(Route::Notifications, cx)));
 
         div()
@@ -920,8 +938,13 @@ impl AppShell {
                 Button::new("settings")
                     .ghost()
                     .icon(IconName::Settings)
-                    .tooltip("Settings")
-                    .on_click(cx.listener(|this, _, _, cx| this.navigate(Route::Settings, cx))),
+                    .tooltip(if cfg!(target_os = "macos") {
+                        "Settings (Cmd+,)"
+                    } else {
+                        "Settings (Ctrl+,)"
+                    })
+                    .selected(self.route == Route::Settings)
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_settings(cx))),
             )
     }
 
@@ -1590,6 +1613,25 @@ impl Render for AppShell {
                     this.toggle_palette(PaletteKind::Commands, window, cx)
                 });
             })
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                // パレット表示中の Esc はパレットを閉じる方に任せる。
+                if event.keystroke.key == "escape"
+                    && this.route == Route::Settings
+                    && this.palette.is_none()
+                {
+                    this.close_settings(cx);
+                }
+            }))
+            .on_action::<OpenSettings>({
+                let weak = cx.entity().downgrade();
+                move |_, _, cx| {
+                    let _ = weak.update(cx, |this, cx| {
+                        if this.client.is_some() {
+                            this.toggle_settings(cx)
+                        }
+                    });
+                }
+            })
             .on_action::<OpenQuickSearch>(move |_, window, cx| {
                 let _ = weak_search.update(cx, |this, cx| {
                     this.toggle_palette(PaletteKind::QuickSearch, window, cx)
@@ -1607,7 +1649,10 @@ impl Render for AppShell {
                         .flex_1()
                         .min_h_0()
                         .overflow_hidden()
-                        .when(self.sidebar_visible, |d| d.child(self.sidebar(&colors, cx)))
+                        // Settings は専用の左ナビを持つので、アプリの Sidebar は隠す。
+                        .when(self.sidebar_visible && self.route != Route::Settings, |d| {
+                            d.child(self.sidebar(&colors, cx))
+                        })
                         .child(
                             div()
                                 .flex_1()
@@ -1647,4 +1692,27 @@ fn page_header(colors: &KoyoriColors, title: SharedString, subtitle: SharedStrin
                 .text_ellipsis()
                 .child(subtitle),
         )
+}
+
+/// 未読数の赤いピル。gpui-kit の `Badge` は子要素の角に重ねる部品で、
+/// 単体で置くと右半分が切れるため自前で描く。
+fn count_pill(count: i64, color: Hsla) -> Div {
+    let text = if count > 99 {
+        "99+".to_string()
+    } else {
+        count.to_string()
+    };
+    div()
+        .h(px(18.))
+        .min_w(px(18.))
+        .px(px(5.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .bg(color)
+        .text_color(gpui_kit::white())
+        .text_size(px(11.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .child(text)
 }

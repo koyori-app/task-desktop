@@ -4,12 +4,10 @@
 
 use core::settings::Appearance;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::Theme;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::radio::RadioGroup;
-use gpui_kit::component::{Disableable, Icon};
+use gpui_kit::component::switch::Switch;
+use gpui_kit::component::{Disableable, Icon, Selectable, Theme};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
@@ -19,6 +17,8 @@ pub enum SettingsEvent {
     Changed(core::Settings),
     /// ログアウト完了（client 破棄と未ログイン画面への遷移は app 側）。
     LoggedOut,
+    /// 設定画面を閉じて元の画面へ戻る。
+    Close,
 }
 
 const KEY_PALETTE: &str = "command_palette";
@@ -54,6 +54,7 @@ pub struct SettingsView {
     device_generation: u64,
     devices_loading: bool,
     background_available: bool,
+    section: Section,
 }
 
 impl EventEmitter<SettingsEvent> for SettingsView {}
@@ -101,6 +102,7 @@ impl SettingsView {
             device_generation: 0,
             devices_loading: client.is_some(),
             background_available: true,
+            section: Section::General,
         };
         if let Some(client) = client {
             this.refresh_devices(&client, cx);
@@ -286,38 +288,18 @@ impl SettingsView {
 
     // ---- render helpers ----
 
-    fn section(&self, title: &'static str, children: Vec<AnyElement>) -> AnyElement {
-        div()
-            .flex()
-            .flex_col()
-            .flex_shrink_0()
-            .min_w_0()
-            .w_full()
-            .items_start()
-            .gap_2()
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(title),
-            )
-            .children(children)
-            .into_any_element()
-    }
-
-    fn toggle(
+    fn switch(
         &self,
         id: &'static str,
-        label: &'static str,
         checked: bool,
+        disabled: bool,
         cx: &mut Context<Self>,
         f: impl Fn(&mut core::Settings, bool) + 'static,
     ) -> AnyElement {
         let weak = cx.entity().downgrade();
-        Checkbox::new(id)
-            .label(label)
+        Switch::new(id)
             .checked(checked)
-            .disabled(id == "keep-bg" && !self.background_available)
+            .disabled(disabled)
             .on_click(move |v, _, cx| {
                 let _ = weak.update(cx, |this, cx| {
                     this.mutate(|s| f(s, *v), cx);
@@ -325,176 +307,303 @@ impl SettingsView {
             })
             .into_any_element()
     }
-}
 
-fn key_or(settings: &core::Settings, key: &str, default: &str) -> String {
-    settings
-        .keybindings
-        .get(key)
-        .cloned()
-        .unwrap_or_else(|| default.into())
-}
+    fn set_launch_at_login(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if let Some(h) = &self.autolaunch
+            && let Err(error) = if enabled { h.enable() } else { h.disable() }
+        {
+            self.notice = Some(format!("Could not update login startup: {error}").into());
+            cx.notify();
+            return;
+        }
+        self.mutate(|s| s.launch_at_login = enabled, cx);
+        // 保存に失敗したら OS 側も元に戻す。
+        if self.settings.launch_at_login != enabled
+            && let Some(h) = &self.autolaunch
+        {
+            let _ = if self.settings.launch_at_login {
+                h.enable()
+            } else {
+                h.disable()
+            };
+        }
+    }
 
-impl Render for SettingsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (muted_fg, accent) = {
-            let t = Theme::global(cx);
-            (t.muted_foreground, t.primary)
-        };
+    fn general_page(&self, c: &Colors, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let s = &self.settings;
+        let weak = cx.entity().downgrade();
+        let launch = Switch::new("launch-at-login")
+            .checked(s.launch_at_login)
+            .disabled(self.autolaunch.is_none())
+            .on_click(move |v, _, cx| {
+                let _ = weak.update(cx, |this, cx| this.set_launch_at_login(*v, cx));
+            })
+            .into_any_element();
+        let background = self.switch(
+            "keep-bg",
+            s.keep_running_in_background && self.background_available,
+            !self.background_available,
+            cx,
+            |s, v| s.keep_running_in_background = v,
+        );
+        vec![group(
+            c,
+            vec![
+                row(
+                    c,
+                    "Launch at login",
+                    Some("Start Koyori automatically when you sign in to your computer."),
+                    launch,
+                ),
+                row(
+                    c,
+                    "Keep running in background",
+                    Some(if self.background_available {
+                        "Closing the window keeps Koyori in the system tray so notifications still arrive."
+                    } else {
+                        "Unavailable: this desktop has no system tray, so closing the window quits Koyori."
+                    }),
+                    background,
+                ),
+            ],
+        )]
+    }
 
-        // General
-        let launch_toggle = {
-            let weak = cx.entity().downgrade();
-            let checked = s.launch_at_login;
-            Checkbox::new("launch-at-login")
-                .label("Launch at Login")
-                .checked(checked)
-                .disabled(self.autolaunch.is_none())
-                .on_click(move |v, _, cx| {
-                    let _ = weak.update(cx, |this, cx| {
-                        if let Some(h) = &this.autolaunch
-                            && let Err(error) = if *v { h.enable() } else { h.disable() }
-                        {
-                            this.notice =
-                                Some(format!("Could not update login startup: {error}").into());
-                            cx.notify();
-                            return;
-                        }
-                        this.mutate(|s| s.launch_at_login = *v, cx);
-                        if this.settings.launch_at_login != *v
-                            && let Some(h) = &this.autolaunch
-                        {
-                            let _ = if this.settings.launch_at_login {
-                                h.enable()
+    fn notifications_page(&self, c: &Colors, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let n = self.settings.notifications.clone();
+        let off = !n.enabled;
+        vec![
+            group(
+                c,
+                vec![row(
+                    c,
+                    "Desktop notifications",
+                    Some(
+                        "Show OS notifications for new activity. The Notification Center always receives everything.",
+                    ),
+                    self.switch("notif-enabled", n.enabled, false, cx, |s, v| {
+                        s.notifications.enabled = v
+                    }),
+                )],
+            ),
+            group_title(c, "Notify me about"),
+            group(
+                c,
+                vec![
+                    row(
+                        c,
+                        "Tasks",
+                        Some("Assignments, mentions, status changes and comments."),
+                        self.switch("notif-task", n.task, off, cx, |s, v| {
+                            s.notifications.task = v
+                        }),
+                    ),
+                    row(
+                        c,
+                        "Reviews",
+                        Some("New review rounds and finding state changes."),
+                        self.switch("notif-review", n.review, off, cx, |s, v| {
+                            s.notifications.review = v
+                        }),
+                    ),
+                    row(
+                        c,
+                        "Due dates",
+                        Some("Tasks that are about to reach their due date."),
+                        self.switch("notif-due", n.due_date, off, cx, |s, v| {
+                            s.notifications.due_date = v
+                        }),
+                    ),
+                ],
+            ),
+            group(
+                c,
+                vec![row(
+                    c,
+                    "Per-project settings",
+                    Some("Which events are recorded for each project is managed on the web."),
+                    Button::new("notif-web-link")
+                        .outline()
+                        .compact()
+                        .label("Open on web")
+                        .icon(Icon::new(IconName::ExternalLink))
+                        .disabled(true)
+                        .tooltip(
+                            "Project notification settings are not available on the website yet",
+                        )
+                        .into_any_element(),
+                )],
+            ),
+        ]
+    }
+
+    fn appearance_page(&self, c: &Colors, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let current = self.settings.appearance;
+        let options = [
+            (Appearance::Light, "Light", IconName::Sun),
+            (Appearance::Dark, "Dark", IconName::Moon),
+            (Appearance::System, "System", IconName::Settings2),
+        ];
+        let mut choices = div().flex().flex_row().gap_2();
+        for (value, label, icon) in options {
+            choices = choices.child(
+                Button::new(SharedString::from(format!("appearance-{label}")))
+                    .outline()
+                    .compact()
+                    .selected(current == value)
+                    .icon(icon)
+                    .label(label)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.mutate(|s| s.appearance = value, cx);
+                    })),
+            );
+        }
+        vec![group(
+            c,
+            vec![row(
+                c,
+                "Theme",
+                Some("System follows your operating system's light or dark mode."),
+                choices.into_any_element(),
+            )],
+        )]
+    }
+
+    fn keyboard_page(&self, c: &Colors, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        vec![
+            group(
+                c,
+                vec![
+                    row(
+                        c,
+                        "Command palette",
+                        Some("Run any command from anywhere."),
+                        Input::new(&self.palette_key).w(px(160.)).into_any_element(),
+                    ),
+                    row(
+                        c,
+                        "Quick search",
+                        Some("Jump to a project or task."),
+                        Input::new(&self.search_key).w(px(160.)).into_any_element(),
+                    ),
+                ],
+            ),
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .child(
+                    Button::new("save-keybindings")
+                        .primary()
+                        .compact()
+                        .label("Save shortcuts")
+                        .on_click(cx.listener(|this, _, _, cx| this.save_keybindings(cx))),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(c.muted)
+                        .child("Use the form ctrl-k or cmd-shift-p. Takes effect after restart."),
+                )
+                .into_any_element(),
+        ]
+    }
+
+    fn account_page(&self, c: &Colors, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let mut out = vec![];
+        let profile_row = if let Some(profile) = &self.profile {
+            let initial = profile
+                .username
+                .chars()
+                .next()
+                .map(|ch| ch.to_uppercase().to_string())
+                .unwrap_or_default();
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .p_4()
+                .child(
+                    div()
+                        .size(px(40.))
+                        .flex_shrink_0()
+                        .rounded_full()
+                        .bg(c.accent)
+                        .text_color(c.accent_fg)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(initial),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .min_w_0()
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(profile.username.clone()),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(c.muted)
+                                .child(profile.email.clone()),
+                        )
+                        .child(div().text_xs().text_color(c.muted).child(format!(
+                            "Email {} · Two-factor authentication {}",
+                            if profile.email_verified {
+                                "verified"
                             } else {
-                                h.disable()
-                            };
-                        }
-                    });
+                                "not verified"
+                            },
+                            if profile.totp_enabled { "on" } else { "off" }
+                        ))),
+                )
+                .into_any_element()
+        } else {
+            div()
+                .p_4()
+                .text_sm()
+                .text_color(c.muted)
+                .child(if self.profile_loading {
+                    "Loading account information…"
+                } else if self.client.is_some() {
+                    "Signed in to Koyori"
+                } else {
+                    "Not signed in"
                 })
                 .into_any_element()
         };
-        let general = self.section(
-            "General",
-            vec![
-                launch_toggle,
-                self.toggle(
-                    "keep-bg",
-                    if self.background_available {
-                        "Keep Running in Background"
-                    } else {
-                        "Background mode unavailable (no system tray)"
-                    },
-                    s.keep_running_in_background && self.background_available,
-                    cx,
-                    |s, v| s.keep_running_in_background = v,
-                ),
-            ],
-        );
-
-        // Notifications（§22: ローカルの OS 通知 ON/OFF のみ。プロジェクト毎は Web）
-        let notifications = self.section(
-            "Notifications",
-            vec![
-                self.toggle(
-                    "notif-enabled",
-                    "Enable Desktop Notifications",
-                    s.notifications.enabled,
-                    cx,
-                    |s, v| s.notifications.enabled = v,
-                ),
-                self.toggle("notif-task", "Task", s.notifications.task, cx, |s, v| {
-                    s.notifications.task = v
-                }),
-                self.toggle(
-                    "notif-review",
-                    "Review",
-                    s.notifications.review,
-                    cx,
-                    |s, v| s.notifications.review = v,
-                ),
-                self.toggle(
-                    "notif-due",
-                    "Due Date",
-                    s.notifications.due_date,
-                    cx,
-                    |s, v| s.notifications.due_date = v,
-                ),
-                Button::new("notif-web-link")
-                    .ghost()
-                    .label("Project notification settings (Web)")
-                    .icon(Icon::new(IconName::ExternalLink))
-                    .disabled(true)
-                    .tooltip("Project notification settings are not available on the website yet")
-                    .into_any_element(),
-            ],
-        );
-
-        // Appearance
-        let appearances = [Appearance::Light, Appearance::Dark, Appearance::System];
-        let appearance = self.section(
-            "Appearance",
-            vec![
-                RadioGroup::horizontal("appearance")
-                    .children(["Light", "Dark", "System"])
-                    .selected_index(appearances.iter().position(|value| *value == s.appearance))
-                    .on_change(cx.listener(move |this, index: &usize, _, cx| {
-                        if let Some(appearance) = appearances.get(*index) {
-                            this.mutate(|settings| settings.appearance = *appearance, cx);
+        let mut profile_rows = vec![profile_row];
+        if let Some(error) = &self.profile_error {
+            profile_rows.push(row(
+                c,
+                "Could not load account",
+                Some(error.as_ref()),
+                Button::new("reload-account")
+                    .outline()
+                    .compact()
+                    .label("Retry")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(client) = this.client.clone() {
+                            this.profile_loading = true;
+                            this.profile_error = None;
+                            this.refresh_profile(&client, cx);
+                            cx.notify();
                         }
                     }))
                     .into_any_element(),
-            ],
-        );
+            ));
+        }
+        out.push(group(c, profile_rows));
 
-        // Keyboard
-        let keyboard = self.section(
-            "Keyboard",
-            vec![
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .w_full()
-                    .items_center()
-                    .gap_2()
-                    .child(div().w(px(160.)).flex_shrink_0().child("Command Palette"))
-                    .child(Input::new(&self.palette_key).w(px(200.)))
-                    .into_any_element(),
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .w_full()
-                    .items_center()
-                    .gap_2()
-                    .child(div().w(px(160.)).flex_shrink_0().child("Quick Search"))
-                    .child(Input::new(&self.search_key).w(px(200.)))
-                    .into_any_element(),
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        Button::new("save-keybindings")
-                            .outline()
-                            .label("Apply")
-                            .on_click(cx.listener(|this, _, _, cx| this.save_keybindings(cx))),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(muted_fg)
-                            .child("Changes take effect after restart"),
-                    )
-                    .into_any_element(),
-            ],
-        );
-
-        // Account
+        out.push(group_title(c, "Devices"));
         let own_device_id = self.own_device_id();
         let device_rows: Vec<AnyElement> = self
             .devices
@@ -507,174 +616,324 @@ impl Render for SettingsView {
                     .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
                     .unwrap_or_else(|| "—".into());
                 let weak = cx.entity().downgrade();
-                div()
-                    .flex()
-                    .flex_row()
-                    .w_full()
-                    .min_w_0()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(div().text_sm().child(format!(
-                                "{}{}",
-                                d.name,
-                                if own { " (this device)" } else { "" }
-                            )))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(muted_fg)
-                                    .child(format!("Last used {last}")),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(muted_fg)
-                                    .child(format!("Expires {}", d.expires_at.format("%Y-%m-%d"))),
-                            ),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("revoke-{id}")))
-                            .ghost()
-                            .label(if own { "Logout" } else { "Revoke" })
-                            .on_click(move |_, _, cx| {
-                                let _ = weak.update(cx, |this, cx| this.revoke_device(id, cx));
-                            }),
-                    )
-                    .into_any_element()
+                let title = if own {
+                    format!("{} (this device)", d.name)
+                } else {
+                    d.name.clone()
+                };
+                row_owned(
+                    c,
+                    title,
+                    Some(format!(
+                        "Last used {last} · Expires {}",
+                        d.expires_at.format("%Y-%m-%d")
+                    )),
+                    Button::new(SharedString::from(format!("revoke-{id}")))
+                        .outline()
+                        .compact()
+                        .label(if own { "Log out" } else { "Revoke" })
+                        .on_click(move |_, _, cx| {
+                            let _ = weak.update(cx, |this, cx| this.revoke_device(id, cx));
+                        })
+                        .into_any_element(),
+                )
             })
             .collect();
-        let mut account_children = vec![];
-        if let Some(profile) = &self.profile {
-            account_children.push(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .w_full()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(profile.username.clone()),
-                    )
-                    .child(div().text_color(muted_fg).child(profile.email.clone()))
-                    .child(div().text_xs().text_color(muted_fg).child(format!(
-                        "Email {} · Two-factor authentication {}",
-                        if profile.email_verified {
-                            "verified"
-                        } else {
-                            "not verified"
-                        },
-                        if profile.totp_enabled {
-                            "enabled"
-                        } else {
-                            "disabled"
-                        }
-                    )))
-                    .into_any_element(),
-            );
-        } else {
-            account_children.push(
-                div()
-                    .text_sm()
-                    .text_color(muted_fg)
-                    .child(if self.profile_loading {
-                        "Loading account information…"
-                    } else if self.client.is_some() {
-                        "Signed in to Koyori"
-                    } else {
-                        "Not signed in"
-                    })
-                    .into_any_element(),
-            );
-        }
-        if let Some(error) = &self.profile_error {
-            account_children.push(
-                div()
-                    .text_sm()
-                    .child(format!("Could not load account: {error}"))
-                    .into_any_element(),
-            );
-            account_children.push(
-                Button::new("reload-account")
-                    .ghost()
-                    .label("Retry account information")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(client) = this.client.clone() {
-                            this.profile_loading = true;
-                            this.profile_error = None;
-                            this.refresh_profile(&client, cx);
-                            cx.notify();
-                        }
-                    }))
-                    .into_any_element(),
-            );
-        }
-        account_children.push(
-            div()
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
-                .child("Devices")
-                .into_any_element(),
-        );
         if device_rows.is_empty() {
-            account_children.push(
-                div()
-                    .text_sm()
-                    .text_color(muted_fg)
-                    .child(if self.devices_loading {
-                        "Loading devices…"
-                    } else {
-                        "No devices"
-                    })
-                    .into_any_element(),
-            );
+            out.push(group(
+                c,
+                vec![
+                    div()
+                        .p_4()
+                        .text_sm()
+                        .text_color(c.muted)
+                        .child(if self.devices_loading {
+                            "Loading devices…"
+                        } else {
+                            "No devices"
+                        })
+                        .into_any_element(),
+                ],
+            ));
         } else {
-            account_children.extend(device_rows);
+            out.push(group(c, device_rows));
         }
-        account_children.push(
-            Button::new("logout")
-                .outline()
-                .disabled(self.client.is_none())
-                .label("Logout")
-                .icon(Icon::new(IconName::LogOut))
-                .on_click(cx.listener(|this, _, _, cx| this.logout(cx)))
-                .into_any_element(),
-        );
-        let account = self.section("Account", account_children);
 
-        div()
-            .id("settings-scroll")
-            .size_full()
-            .min_w_0()
-            .min_h_0()
-            .overflow_y_scroll()
-            .p_6()
+        out.push(group(
+            c,
+            vec![row(
+                c,
+                "Log out",
+                Some("Sign out of Koyori on this computer and revoke its device token."),
+                Button::new("logout")
+                    .danger()
+                    .compact()
+                    .disabled(self.client.is_none())
+                    .label("Log out")
+                    .icon(Icon::new(IconName::LogOut))
+                    .on_click(cx.listener(|this, _, _, cx| this.logout(cx)))
+                    .into_any_element(),
+            )],
+        ));
+        out
+    }
+}
+
+fn key_or(settings: &core::Settings, key: &str, default: &str) -> String {
+    settings
+        .keybindings
+        .get(key)
+        .cloned()
+        .unwrap_or_else(|| default.into())
+}
+
+/// render で使う色。
+struct Colors {
+    muted: Hsla,
+    border: Hsla,
+    surface: Hsla,
+    hover: Hsla,
+    accent: Hsla,
+    accent_fg: Hsla,
+}
+
+/// 項目をまとめるカード。行の間に区切り線を入れる。
+fn group(c: &Colors, rows: Vec<AnyElement>) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .flex_shrink_0()
+        .w_full()
+        .rounded_lg()
+        .border_1()
+        .border_color(c.border)
+        .bg(c.surface)
+        .children(rows.into_iter().enumerate().map(|(ix, row)| {
+            div()
+                .when(ix > 0, |d| d.border_t_1().border_color(c.border))
+                .child(row)
+        }))
+        .into_any_element()
+}
+
+fn group_title(c: &Colors, title: &'static str) -> AnyElement {
+    div()
+        .pt_2()
+        .text_sm()
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(c.muted)
+        .child(title)
+        .into_any_element()
+}
+
+/// 左に名前と説明、右に操作部品を置く 1 行。
+fn row(
+    c: &Colors,
+    title: &'static str,
+    description: Option<&str>,
+    control: AnyElement,
+) -> AnyElement {
+    row_owned(
+        c,
+        title.to_string(),
+        description.map(str::to_string),
+        control,
+    )
+}
+
+fn row_owned(
+    c: &Colors,
+    title: String,
+    description: Option<String>,
+    control: AnyElement,
+) -> AnyElement {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_4()
+        .px_4()
+        .py_3()
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .gap_0p5()
+                .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(title))
+                .when_some(description, |d, text| {
+                    d.child(div().text_xs().text_color(c.muted).child(text))
+                }),
+        )
+        .child(div().flex_shrink_0().child(control))
+        .into_any_element()
+}
+
+impl Render for SettingsView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = {
+            let t = Theme::global(cx);
+            let tokens = t.semantic_tokens().colors;
+            Colors {
+                muted: t.muted_foreground,
+                border: t.border,
+                surface: tokens.background,
+                hover: t.secondary,
+                accent: t.primary,
+                accent_fg: t.primary_foreground,
+            }
+        };
+        let section = self.section;
+        let body = match section {
+            Section::General => self.general_page(&colors, cx),
+            Section::Notifications => self.notifications_page(&colors, cx),
+            Section::Appearance => self.appearance_page(&colors, cx),
+            Section::Keyboard => self.keyboard_page(&colors, cx),
+            Section::Account => self.account_page(&colors, cx),
+        };
+
+        let nav = div()
+            .w(px(220.))
+            .h_full()
+            .flex_shrink_0()
             .flex()
             .flex_col()
-            .gap_6()
-            .text_sm()
+            .gap_1()
+            .p_3()
+            .border_r_1()
+            .border_color(colors.border)
+            .child(
+                div().flex().pb_2().child(
+                    Button::new("settings-back")
+                        .ghost()
+                        .compact()
+                        .icon(IconName::ArrowLeft)
+                        .label("Back")
+                        .tooltip("Back (Esc)")
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Close))),
+                ),
+            )
             .child(
                 div()
-                    .flex_shrink_0()
-                    .text_xl()
+                    .px_2()
+                    .pb_2()
+                    .text_lg()
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("Settings"),
             )
-            .when_some(self.notice.clone(), |d, n| {
-                d.child(div().text_sm().text_color(accent).child(n))
-            })
-            .child(general)
-            .child(notifications)
-            .child(appearance)
-            .child(keyboard)
-            .child(account)
+            .children(Section::ALL.into_iter().map(|item| {
+                let active = item == section;
+                div()
+                    .id(item.label())
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1p5()
+                    .rounded_md()
+                    .text_sm()
+                    .cursor_pointer()
+                    .when(active, |d| {
+                        d.bg(colors.hover).font_weight(FontWeight::MEDIUM)
+                    })
+                    .when(!active, |d| {
+                        d.text_color(colors.muted).hover(|d| d.bg(colors.hover))
+                    })
+                    .child(Icon::new(item.icon()).size_4())
+                    .child(item.label())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.section = item;
+                        cx.notify();
+                    }))
+            }));
+
+        let content = div()
+            .id("settings-scroll")
+            .flex_1()
+            .h_full()
+            .min_w_0()
+            .overflow_y_scroll()
+            .child(
+                div()
+                    .max_w(px(720.))
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .px_8()
+                    .py_6()
+                    .child(
+                        div()
+                            .pb_2()
+                            .text_xl()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(section.label()),
+                    )
+                    .when_some(self.notice.clone(), |d, n| {
+                        d.child(
+                            div()
+                                .px_3()
+                                .py_2()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(colors.border)
+                                .text_sm()
+                                .child(n),
+                        )
+                    })
+                    .children(body),
+            );
+
+        div()
+            .id("settings")
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .flex()
+            .flex_row()
+            .child(nav)
+            .child(content)
+    }
+}
+
+/// 左ナビの区分（§22 の区分に対応）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Section {
+    General,
+    Notifications,
+    Appearance,
+    Keyboard,
+    Account,
+}
+
+impl Section {
+    const ALL: [Section; 5] = [
+        Section::General,
+        Section::Notifications,
+        Section::Appearance,
+        Section::Keyboard,
+        Section::Account,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Section::General => "General",
+            Section::Notifications => "Notifications",
+            Section::Appearance => "Appearance",
+            Section::Keyboard => "Keyboard",
+            Section::Account => "Account",
+        }
+    }
+
+    fn icon(self) -> IconName {
+        match self {
+            Section::General => IconName::Settings,
+            Section::Notifications => IconName::Bell,
+            Section::Appearance => IconName::Palette,
+            Section::Keyboard => IconName::SquareTerminal,
+            Section::Account => IconName::CircleUser,
+        }
     }
 }
