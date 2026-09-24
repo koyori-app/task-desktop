@@ -49,6 +49,8 @@ pub struct Settings {
     /// authorize ページを開く Web 側オリジン。
     pub web_base: String,
     pub appearance: Appearance,
+    /// 表示言語。未設定（既存の settings.json）は日本語。
+    pub language: i18n::Language,
     pub launch_at_login: bool,
     /// ON なら Window を閉じても常駐する（§8）。Tray 非対応環境では無効化。
     pub keep_running_in_background: bool,
@@ -69,6 +71,7 @@ impl Default for Settings {
             api_base: "https://task.koyori.app/api".into(),
             web_base: "https://task.koyori.app".into(),
             appearance: Appearance::System,
+            language: i18n::Language::Ja,
             launch_at_login: false,
             keep_running_in_background: true,
             notifications: NotificationPrefs::default(),
@@ -142,6 +145,14 @@ mod tests {
         assert!(!loaded.notifications.review);
         assert_eq!(loaded.notification_cursor.as_deref(), Some("abc"));
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn language_defaults_to_japanese_for_existing_files() {
+        let settings: Settings = serde_json::from_str(r#"{"appearance":"dark"}"#).unwrap();
+        assert_eq!(settings.language, i18n::Language::Ja);
+        let settings: Settings = serde_json::from_str(r#"{"language":"en"}"#).unwrap();
+        assert_eq!(settings.language, i18n::Language::En);
     }
 
     #[test]

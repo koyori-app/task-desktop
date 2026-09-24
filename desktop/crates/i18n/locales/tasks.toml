@@ -1,0 +1,3 @@
+# tasks の表示文字列。キーは "tasks.<key>"（t!("tasks.<key>")）。
+# 1 行 1 キーで ja / en を並べる。引数は {name} で埋め込む。
+

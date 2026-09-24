@@ -4,6 +4,7 @@ members = [
     "crates/app",
     "crates/api",
     "crates/core",
+    "crates/i18n",
     "crates/platform",
     "crates/mock-api",
     "crates/features/*",

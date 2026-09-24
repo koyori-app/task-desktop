@@ -228,6 +228,7 @@ dependencies = [
  "feature-tasks",
  "futures",
  "gpui-kit",
+ "i18n",
  "platform",
  "serde_json",
  "uuid",
@@ -1232,6 +1233,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "directories",
+ "i18n",
  "platform",
  "serde",
  "serde_json",
@@ -1956,6 +1958,7 @@ dependencies = [
  "chrono",
  "core",
  "gpui-kit",
+ "i18n",
  "uuid",
 ]
 
@@ -1971,6 +1974,7 @@ dependencies = [
  "chrono",
  "core",
  "gpui-kit",
+ "i18n",
  "serde_json",
  "uuid",
 ]
@@ -1987,6 +1991,7 @@ dependencies = [
  "chrono",
  "core",
  "gpui-kit",
+ "i18n",
  "platform",
  "uuid",
 ]
@@ -1999,6 +2004,7 @@ dependencies = [
  "chrono",
  "core",
  "gpui-kit",
+ "i18n",
  "serde_json",
  "uuid",
 ]
@@ -3485,6 +3491,14 @@ dependencies = [
  "tower-service",
  "tracing",
  "windows-registry 0.6.1",
+]
+
+[[package]]
+name = "i18n"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -5563,6 +5577,7 @@ version = "0.0.0"
 dependencies = [
  "auto-launch",
  "global-hotkey",
+ "i18n",
  "image",
  "keyring",
  "muda",

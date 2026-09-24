@@ -9,6 +9,7 @@ license.workspace = true
 doctest = false
 
 [dependencies]
+i18n = { path = "../i18n" }
 api = { path = "../api" }
 platform = { path = "../platform" }
 thiserror = "2"

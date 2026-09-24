@@ -4,6 +4,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+i18n = { path = "../../i18n" }
 gpui-kit.workspace = true
 api = { path = "../../api" }
 core = { path = "../../core" }

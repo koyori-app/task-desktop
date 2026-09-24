@@ -21,6 +21,8 @@ fn main() {
                 core::SettingsStore::at(std::env::temp_dir().join("koyori-settings.json"))
             });
             let settings = settings_store.load();
+            // 画面・Tray・OS 通知の文言は起動時の言語で組み立てる。
+            i18n::set_language(settings.language);
             theme::apply(settings.appearance, None, cx);
 
             // §20/§22 キーバインド（settings.keybindings で上書き可）。

@@ -4,6 +4,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+i18n = { path = "../i18n" }
 thiserror = "2"
 keyring = "4.2.0"
 notify-rust = { version = "4.18.0", default-features = false, features = ["z"] }
