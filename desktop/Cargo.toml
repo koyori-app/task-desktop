@@ -15,7 +15,21 @@ edition = "2024"
 license = "AGPL-3.0-only"
 
 [workspace.dependencies]
-gpui-kit = "=0.6.1"
+# コードブロックの色付けに使う言語（tree-sitter）。増やすとビルド時間とサイズが増える。
+gpui-kit = { version = "=0.6.1", features = [
+    "tree-sitter-bash",
+    "tree-sitter-css",
+    "tree-sitter-diff",
+    "tree-sitter-go",
+    "tree-sitter-html",
+    "tree-sitter-javascript",
+    "tree-sitter-python",
+    "tree-sitter-rust",
+    "tree-sitter-toml",
+    "tree-sitter-tsx",
+    "tree-sitter-typescript",
+    "tree-sitter-yaml",
+] }
 
 # 依存（GPUI / gpui-kit など）は debug ビルドでも最適化する。
 # 最適化なしだと 1 フレームの描画に 100ms を超え、ホバーやスクロールがもたつく。

@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 
 use crate::avatar::user_avatar;
+use crate::markdown::MarkdownBlocks;
 use crate::model::{PRIORITIES, due_timestamp, parse_hex_color, priority_label};
 use crate::ui::status_pill;
 use api::Client;
@@ -52,6 +53,7 @@ pub struct TaskDetailView {
     comment_input: Entity<InputState>,
     description_input: Entity<TextareaState>,
     editing_description: bool,
+    description_view: MarkdownBlocks,
     posting_comment: bool,
     clear_comment_input: bool,
     shown_error: Option<String>,
@@ -116,6 +118,7 @@ impl TaskDetailView {
                     .placeholder(t!("tasks.detail.description_placeholder"))
             }),
             editing_description: false,
+            description_view: MarkdownBlocks::new(),
             posting_comment: false,
             clear_comment_input: false,
             shown_error: None,
@@ -581,6 +584,12 @@ impl Render for TaskDetailView {
             self.comment_input
                 .update(cx, |s, cx| s.set_value("", window, cx));
         }
+        let description = detail
+            .description
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| t!("tasks.detail.no_description").into());
+        self.description_view.sync(&description, window, cx);
         // 期限は保存値が変わるたび（失敗時の巻き戻しを含む）に合わせる。
         let due = detail
             .soft_deadline
@@ -937,19 +946,7 @@ impl Render for TaskDetailView {
                                     )
                             })
                             .when(!self.editing_description, |d| {
-                                d.child(
-                                    TextView::markdown(
-                                        "task-description",
-                                        detail
-                                            .description
-                                            .clone()
-                                            .filter(|s| !s.is_empty())
-                                            .unwrap_or_else(|| {
-                                                t!("tasks.detail.no_description").into()
-                                            }),
-                                    )
-                                    .w_full(),
-                                )
+                                d.child(self.description_view.render("task-description", cx))
                             }),
                     )
                     .when_some(self.error.clone(), |d, e| {

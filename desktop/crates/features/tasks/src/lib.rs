@@ -5,6 +5,7 @@
 mod avatar;
 mod detail;
 mod list;
+mod markdown;
 mod model;
 mod ui;
 
