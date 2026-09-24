@@ -114,3 +114,31 @@ python packaging/package.py --self-test
 ```
 
 署名情報・OS ごとの前提・配布物の確認方法は [releasing.md](releasing.md) を参照してください。
+
+## 2026-09-25: Windows のタスク一覧クラッシュ修正
+
+`d7a7871` の Windows x64 / MSVC debug ビルドで、タスク一覧へ移動すると
+`thread 'main' has overflowed its stack` で終了する事象をモックで再現しました。
+PE の unwind 情報と PDB を調べると、行描画の大きな固定スタックフレームに加え、
+呼び出し元と GPUI の描画処理が Windows 既定の 1 MiB のスタックに積み重なっていました。
+
+行描画をセルごとの非 inline 関数に分割し、部品を `AnyElement` に変換してから受け渡します。
+また、Windows MSVC の `koyori` 本体だけに 8 MiB のスタック予約を設定しました。
+他の OS とワーカースレッドの設定は変更していません。
+
+当環境の同じ debug ビルド条件での測定値:
+
+| 測定対象 | 修正前 | 修正後 |
+|---|---:|---:|
+| `TaskListView::render_row` の固定フレーム | 489,240 B | 25,656 B |
+| メインスレッドのスタック予約 | 1,048,576 B | 8,388,608 B |
+| スタックの初期 commit | 4,096 B | 4,096 B |
+
+固定フレームの値には呼び出し元・呼び出し先の使用量を含めません。
+Windows は必要に応じてスタックのページを commit します。
+
+- `cargo fmt --all -- --check`、Clippy（workspace / all targets / warnings をエラー扱い）が成功。
+- Workspace テスト 45 件が成功。i18n のドキュメント例 1 件は既定どおり ignored。
+- `cargo build --locked -p app -p mock-api` が成功し、生成 EXE のスタック予約値も確認。
+- 修正版をモック接続・ログ記録付きで起動。PERSONAL / MOCK 一覧の取得をログで確認し、
+  ユーザーが同じ画面操作でクラッシュせず操作できることを確認。

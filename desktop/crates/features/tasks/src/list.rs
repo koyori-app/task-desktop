@@ -1714,6 +1714,8 @@ impl TaskListView {
         }
     }
 
+    // GPUI の大きな一時値をセルごとのフレームに分け、Windows のスタックに収める。
+    #[inline(never)]
     fn render_row(
         &self,
         row: TaskRow,
@@ -1722,17 +1724,53 @@ impl TaskListView {
         project_mode: bool,
         palette: Palette,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
         let id = row.id;
-        let busy = self.pending.contains(&id);
-        let muted = palette.muted;
-        let owner = cx.entity().downgrade();
+        let selected = self.selected == Some(id);
+        let name_cell = self.render_name_cell(&row, depth, group_status, project_mode, palette, cx);
+        let assignee_cell =
+            project_mode.then(|| self.render_assignee_cell(&row, palette.muted, cx));
+        let due_cell = self.render_due_cell(&row, palette, cx);
+        let priority_cell = self.render_priority_cell(&row, cx);
+        let comment_cell = self.render_comment_cell(id, cx);
+
+        div()
+            .id(SharedString::from(format!("task-row-el-{id}")))
+            .group(SharedString::from(format!("task-row-{id}")))
+            .flex()
+            .items_center()
+            .h(px(ROW_H))
+            .px_2()
+            .border_b_1()
+            .border_color(palette.border.opacity(0.6))
+            .cursor_pointer()
+            .when(selected, |d| d.bg(palette.selected))
+            .when(!selected, |d| d.hover(|d| d.bg(palette.hover)))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                window.focus(&this.focus_handle, cx);
+                this.select_row(id, cx);
+            }))
+            .child(name_cell)
+            .children(assignee_cell)
+            .child(due_cell)
+            .child(priority_cell)
+            .child(comment_cell)
+            .into_any_element()
+    }
+
+    #[inline(never)]
+    fn render_subtask_toggle(
+        &self,
+        id: Uuid,
+        depth: u8,
+        group_status: Option<Uuid>,
+        project_mode: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let selected = self.selected == Some(id);
         let expanded = self.expanded.contains(&id);
-        let group_name = SharedString::from(format!("task-row-{id}"));
-
         // サブタスクの開閉。選択中か展開中の行だけに出す（Web と同じ）。
-        let subtask_toggle = if project_mode && depth == 0 && (selected || expanded) {
+        if project_mode && depth == 0 && (selected || expanded) {
             Button::new(SharedString::from(format!("subtasks-{id}")))
                 .ghost()
                 .xsmall()
@@ -1753,8 +1791,18 @@ impl TaskListView {
                 .into_any_element()
         } else {
             div().size(px(20.)).flex_shrink_0().into_any_element()
-        };
+        }
+    }
 
+    #[inline(never)]
+    fn render_status_button(
+        &self,
+        row: &TaskRow,
+        muted: Hsla,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = row.id;
+        let busy = self.pending.contains(&id);
         // 名前の左の丸からステータスを変える（Web と同じ）。
         let status_color = parse_hex_color(&row.status_color).unwrap_or(muted);
         let statuses = self
@@ -1763,8 +1811,8 @@ impl TaskListView {
             .cloned()
             .unwrap_or_default();
         let current_status = row.status_id;
-        let status_owner = owner.clone();
-        let status_button = Button::new(SharedString::from(format!("row-status-{id}")))
+        let status_owner = cx.entity().downgrade();
+        Button::new(SharedString::from(format!("row-status-{id}")))
             .ghost()
             .xsmall()
             .disabled(busy || statuses.is_empty())
@@ -1794,8 +1842,21 @@ impl TaskListView {
                     );
                 }
                 menu
-            });
+            })
+            .into_any_element()
+    }
 
+    #[inline(never)]
+    fn render_label_button(
+        &self,
+        row: &TaskRow,
+        muted: Hsla,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = row.id;
+        let busy = self.pending.contains(&id);
+        let selected = self.selected == Some(id);
+        let group_name = SharedString::from(format!("task-row-{id}"));
         // ラベルの付け外し。行にカーソルを合わせたときだけ出す（Web と同じ）。
         let project_labels = self
             .labels
@@ -1803,8 +1864,8 @@ impl TaskListView {
             .cloned()
             .unwrap_or_default();
         let has_labels: HashSet<Uuid> = row.labels.iter().map(|l| l.id).collect();
-        let label_owner = owner.clone();
-        let label_button = div()
+        let label_owner = cx.entity().downgrade();
+        div()
             .invisible()
             .group_hover(group_name.clone(), |s| s.visible())
             .when(selected, |d| d.visible())
@@ -1845,9 +1906,26 @@ impl TaskListView {
                         }
                         menu
                     }),
-            );
+            )
+            .into_any_element()
+    }
 
-        let label_chips: Vec<_> = row
+    #[inline(never)]
+    fn render_name_cell(
+        &self,
+        row: &TaskRow,
+        depth: u8,
+        group_status: Option<Uuid>,
+        project_mode: bool,
+        palette: Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let muted = palette.muted;
+        let subtask_toggle =
+            self.render_subtask_toggle(row.id, depth, group_status, project_mode, cx);
+        let status_button = self.render_status_button(row, muted, cx);
+        let label_button = self.render_label_button(row, muted, cx);
+        let label_chips: Vec<AnyElement> = row
             .labels
             .iter()
             .map(|label| {
@@ -1866,10 +1944,11 @@ impl TaskListView {
                     .text_color(muted)
                     .child(div().size(px(8.)).rounded_full().bg(color))
                     .child(label.name.clone())
+                    .into_any_element()
             })
             .collect();
 
-        let name_cell = div()
+        div()
             .flex()
             .flex_1()
             .min_w_0()
@@ -1905,21 +1984,41 @@ impl TaskListView {
                     .gap_1()
                     .children(label_chips),
             )
-            .when(project_mode, |d| d.child(label_button));
+            .when(project_mode, |d| d.child(label_button))
+            .into_any_element()
+    }
 
-        let assignee_cell = project_mode.then(|| {
-            div()
-                .flex()
-                .w(px(ASSIGNEE_W))
-                .px_1()
-                .child(self.assignee_picker(&row, busy, muted, cx))
-        });
+    #[inline(never)]
+    fn render_assignee_cell(
+        &self,
+        row: &TaskRow,
+        muted: Hsla,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let busy = self.pending.contains(&row.id);
+        div()
+            .flex()
+            .w(px(ASSIGNEE_W))
+            .px_1()
+            .child(self.assignee_picker(row, busy, muted, cx))
+            .into_any_element()
+    }
 
+    #[inline(never)]
+    fn render_due_cell(
+        &self,
+        row: &TaskRow,
+        palette: Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = row.id;
+        let busy = self.pending.contains(&id);
+        let muted = palette.muted;
         // 期限。押すとカレンダーを出す（Web は日付入力）。
-        let due_owner = owner.clone();
+        let due_owner = cx.entity().downgrade();
         let editing_due = self.due_editing == Some(id);
         let calendar = self.calendar.clone();
-        let clear_owner = owner.clone();
+        let clear_owner = due_owner.clone();
         let has_due = row.due.is_some();
         let due_trigger = match row.due {
             Some(due) => Button::new(SharedString::from(format!("row-due-{id}")))
@@ -1947,42 +2046,52 @@ impl TaskListView {
                 .icon(IconName::CalendarPlus)
                 .tooltip(t!("tasks.list.set_due")),
         };
-        let due_cell = div().flex().w(px(DUE_W)).px_1().child(
-            Popover::new(SharedString::from(format!("due-popover-{id}")))
-                .trigger(due_trigger)
-                .open(editing_due)
-                .on_open_change(move |open, window, cx| {
-                    let _ = due_owner.update(cx, |this, cx| {
-                        this.set_due_editing(open.then_some(id), window, cx)
-                    });
-                })
-                .content(move |_, _, _| {
-                    let clear_owner = clear_owner.clone();
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .child(Calendar::new(&calendar))
-                        .when(has_due, |d| {
-                            d.child(
-                                Button::new(SharedString::from(format!("row-due-clear-{id}")))
-                                    .ghost()
-                                    .compact()
-                                    .icon(IconName::X)
-                                    .label(t!("tasks.list.clear_due"))
-                                    .on_click(move |_, _, cx| {
-                                        let _ = clear_owner.update(cx, |this, cx| {
-                                            this.due_editing = None;
-                                            this.set_row_due(id, None, cx);
-                                        });
-                                    }),
-                            )
-                        })
-                }),
-        );
+        div()
+            .flex()
+            .w(px(DUE_W))
+            .px_1()
+            .child(
+                Popover::new(SharedString::from(format!("due-popover-{id}")))
+                    .trigger(due_trigger)
+                    .open(editing_due)
+                    .on_open_change(move |open, window, cx| {
+                        let _ = due_owner.update(cx, |this, cx| {
+                            this.set_due_editing(open.then_some(id), window, cx)
+                        });
+                    })
+                    .content(move |_, _, _| {
+                        let clear_owner = clear_owner.clone();
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(Calendar::new(&calendar))
+                            .when(has_due, |d| {
+                                d.child(
+                                    Button::new(SharedString::from(format!("row-due-clear-{id}")))
+                                        .ghost()
+                                        .compact()
+                                        .icon(IconName::X)
+                                        .label(t!("tasks.list.clear_due"))
+                                        .on_click(move |_, _, cx| {
+                                            let _ = clear_owner.update(cx, |this, cx| {
+                                                this.due_editing = None;
+                                                this.set_row_due(id, None, cx);
+                                            });
+                                        }),
+                                )
+                            })
+                    }),
+            )
+            .into_any_element()
+    }
 
+    #[inline(never)]
+    fn render_priority_cell(&self, row: &TaskRow, cx: &mut Context<Self>) -> AnyElement {
+        let id = row.id;
+        let busy = self.pending.contains(&id);
         let current_priority = row.priority;
-        let priority_owner = owner.clone();
+        let priority_owner = cx.entity().downgrade();
         let priority_button = Button::new(SharedString::from(format!("row-priority-{id}")))
             .ghost()
             .compact()
@@ -2003,6 +2112,16 @@ impl TaskListView {
                 menu
             });
 
+        div()
+            .flex()
+            .w(px(PRIORITY_W))
+            .px_1()
+            .child(priority_button)
+            .into_any_element()
+    }
+
+    #[inline(never)]
+    fn render_comment_cell(&self, id: Uuid, cx: &mut Context<Self>) -> AnyElement {
         let comment_button = Button::new(SharedString::from(format!("row-comment-{id}")))
             .ghost()
             .xsmall()
@@ -2015,49 +2134,31 @@ impl TaskListView {
             }));
 
         div()
-            .id(SharedString::from(format!("task-row-el-{id}")))
-            .group(group_name)
+            .w(px(COMMENT_W))
             .flex()
-            .items_center()
-            .h(px(ROW_H))
-            .px_2()
-            .border_b_1()
-            .border_color(palette.border.opacity(0.6))
-            .cursor_pointer()
-            .when(selected, |d| d.bg(palette.selected))
-            .when(!selected, |d| d.hover(|d| d.bg(palette.hover)))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                window.focus(&this.focus_handle, cx);
-                this.select_row(id, cx);
-            }))
-            .child(name_cell)
-            .children(assignee_cell)
-            .child(due_cell)
-            .child(div().flex().w(px(PRIORITY_W)).px_1().child(priority_button))
-            .child(
-                div()
-                    .w(px(COMMENT_W))
-                    .flex()
-                    .justify_center()
-                    .child(comment_button),
-            )
+            .justify_center()
+            .child(comment_button)
+            .into_any_element()
     }
 
     /// 担当者の付け外し（Web の TaskAssigneePicker）。
+    #[inline(never)]
     fn assignee_picker(
         &self,
         row: &TaskRow,
         busy: bool,
         muted: Hsla,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
         let id = row.id;
         let extra = row.assignees.len().saturating_sub(MAX_AVATARS);
-        let avatars: Vec<_> = row
+        let avatars: Vec<AnyElement> = row
             .assignees
             .iter()
             .take(MAX_AVATARS)
-            .map(|a| user_avatar(&a.name, a.avatar_url.as_deref(), Size::Small, cx))
+            .map(|a| {
+                user_avatar(&a.name, a.avatar_url.as_deref(), Size::Small, cx).into_any_element()
+            })
             .collect();
         let members = self
             .members
@@ -2118,6 +2219,7 @@ impl TaskListView {
                 }
                 menu
             })
+            .into_any_element()
     }
 
     /// その場でのコメント追加（Web の行の下に開く欄）。
