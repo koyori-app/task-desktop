@@ -16,3 +16,10 @@ license = "AGPL-3.0-only"
 
 [workspace.dependencies]
 gpui-kit = "=0.6.1"
+
+# 依存（GPUI / gpui-kit など）は debug ビルドでも最適化する。
+# 最適化なしだと 1 フレームの描画に 100ms を超え、ホバーやスクロールがもたつく。
+# 自分のクレートは最適化せず、デバッグしやすいままにする。
+[profile.dev.package."*"]
+opt-level = 3
+debug = false

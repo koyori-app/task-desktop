@@ -156,6 +156,26 @@ struct Children {
     failed: bool,
 }
 
+/// 一覧の 1 項目。行数が多くても見えている分だけ描画する（`gpui::list`）。
+#[derive(Debug, Clone, PartialEq)]
+enum Item {
+    Header {
+        group: usize,
+        collapsed: bool,
+    },
+    More(usize),
+    GroupEmpty(usize),
+    Failed(usize),
+    Row {
+        id: Uuid,
+        depth: u8,
+        status: Option<Uuid>,
+    },
+    Comment(Uuid),
+    SubtasksEmpty(Uuid),
+    Bottom,
+}
+
 /// 描画するグループ。
 struct GroupView {
     /// 折りたたみ状態の鍵。Project は status id、My Tasks は `due:<区分>`。
@@ -213,6 +233,19 @@ struct Palette {
     border: Hsla,
 }
 
+impl Palette {
+    fn new(cx: &App) -> Self {
+        let t = Theme::global(cx);
+        Self {
+            muted: t.muted_foreground,
+            danger: t.danger,
+            hover: t.secondary.opacity(0.5),
+            selected: t.secondary,
+            border: t.border,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ListMode {
     MyTasks,
@@ -254,8 +287,11 @@ pub struct TaskListView {
     /// 折りたたんだグループの鍵。
     collapsed: HashSet<String>,
     focus_handle: FocusHandle,
-    scroll_handle: ScrollHandle,
-    /// 直近の描画での (行, スクロール領域内の子 index)。キー操作で使う。
+    list_state: ListState,
+    /// 直近の描画での項目と、その元になったグループ。
+    items: Vec<Item>,
+    view_groups: Vec<GroupView>,
+    /// 直近の描画での (行, 項目 index)。キー操作で使う。
     visible_rows: Vec<(Uuid, usize)>,
     generation: u64,
     context_generation: u64,
@@ -321,7 +357,9 @@ impl TaskListView {
             selected: None,
             collapsed: HashSet::new(),
             focus_handle: cx.focus_handle().tab_stop(true),
-            scroll_handle: ScrollHandle::new(),
+            list_state: ListState::new(0, ListAlignment::Top, px(200.)),
+            items: vec![],
+            view_groups: vec![],
             visible_rows: vec![],
             generation: 0,
             context_generation: 0,
@@ -370,6 +408,8 @@ impl TaskListView {
     }
 
     fn clear_loaded(&mut self) {
+        self.items.clear();
+        self.list_state.reset(0);
         self.rows.clear();
         self.order.clear();
         self.project_groups.clear();
@@ -1069,8 +1109,8 @@ impl TaskListView {
             project: row.project_id,
             task: id,
         });
-        if let Some((_, child)) = self.visible_rows.iter().find(|(row, _)| *row == id) {
-            self.scroll_handle.scroll_to_item(*child);
+        if let Some((_, ix)) = self.visible_rows.iter().find(|(row, _)| *row == id) {
+            self.list_state.scroll_to_reveal_item(*ix);
         }
         cx.notify();
     }
@@ -1290,19 +1330,8 @@ impl Render for TaskListView {
             self.create_input
                 .update(cx, |s, cx| s.set_placeholder(placeholder, window, cx));
         }
-        let (c, palette) = {
-            let t = Theme::global(cx);
-            (
-                t.semantic_tokens().colors,
-                Palette {
-                    muted: t.muted_foreground,
-                    danger: t.danger,
-                    hover: t.secondary.opacity(0.5),
-                    selected: t.secondary,
-                    border: t.border,
-                },
-            )
-        };
+        let c = Theme::global(cx).semantic_tokens().colors;
+        let palette = Palette::new(cx);
         let muted = palette.muted;
         let empty_text = match self.mode {
             ListMode::MyTasks => t!("tasks.list.empty_my"),
@@ -1311,89 +1340,15 @@ impl Render for TaskListView {
         let project_mode = self.project().is_some();
 
         let groups = self.groups();
-        let mut body: Vec<AnyElement> = vec![];
-        let mut visible_rows = vec![];
-        for group in &groups {
-            let collapsed = self.collapsed.contains(&group.key);
-            body.push(self.render_group_header(group, collapsed, muted, cx));
-            if collapsed {
-                continue;
-            }
-            let more = group.more.filter(|_| !group.failed);
-            if group.more_on_top
-                && let Some(remaining) = more
-            {
-                body.push(self.render_more_button(group, remaining, cx));
-            }
-            if group.ids.is_empty() && !group.failed {
-                body.push(
-                    div()
-                        .px_3()
-                        .py_2()
-                        .text_sm()
-                        .text_color(muted)
-                        .child(if group.loading {
-                            t!("tasks.list.loading")
-                        } else {
-                            t!("tasks.list.group_empty")
-                        })
-                        .into_any_element(),
-                );
-            }
-            for id in &group.ids {
-                self.push_row(
-                    *id,
-                    0,
-                    group.status_id,
-                    project_mode,
-                    palette,
-                    &mut body,
-                    &mut visible_rows,
-                    cx,
-                );
-            }
-            if !group.more_on_top
-                && let Some(remaining) = more
-            {
-                body.push(self.render_more_button(group, remaining, cx));
-            }
-            if group.failed {
-                let status = group.status_id;
-                body.push(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .px_3()
-                        .py_2()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(palette.danger)
-                                .child(t!("tasks.list.load_failed")),
-                        )
-                        .when_some(status, |d, status| {
-                            d.child(
-                                Button::new(SharedString::from(format!("retry-{status}")))
-                                    .outline()
-                                    .compact()
-                                    .label(t!("tasks.list.retry"))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.load_more_group(status, cx)
-                                    })),
-                            )
-                        })
-                        .into_any_element(),
-                );
-            }
-        }
-        self.visible_rows = visible_rows;
+        let items = self.build_items(&groups);
+        self.sync_items(items);
+        self.view_groups = groups;
 
         let empty = if self.client.is_none() {
             Some(t!("tasks.list.empty_signed_out"))
-        } else if groups.is_empty() && self.loading {
+        } else if self.view_groups.is_empty() && self.loading {
             Some(t!("tasks.list.loading"))
-        } else if groups.is_empty() {
+        } else if self.view_groups.is_empty() {
             Some(empty_text)
         } else {
             None
@@ -1494,11 +1449,10 @@ impl Render for TaskListView {
                     div()
                         .id("task-rows")
                         .track_focus(&self.focus_handle)
+                        .flex()
+                        .flex_col()
                         .flex_1()
                         .min_h_0()
-                        .overflow_y_scroll()
-                        .track_scroll(&self.scroll_handle)
-                        .pb_4()
                         .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                             match event.keystroke.key.as_str() {
                                 "up" => this.move_selection(-1, cx),
@@ -1515,7 +1469,22 @@ impl Render for TaskListView {
                             }
                             cx.stop_propagation();
                         }))
-                        .children(body),
+                        .child(
+                            list(
+                                self.list_state.clone(),
+                                // list は項目を内容の幅で組むので、幅いっぱいに伸ばす。
+                                cx.processor(|this, ix, window, cx| {
+                                    div()
+                                        .w_full()
+                                        .flex()
+                                        .flex_col()
+                                        .child(this.render_item(ix, window, cx))
+                                        .into_any_element()
+                                }),
+                            )
+                            .flex_1()
+                            .w_full(),
+                        ),
                 ),
             })
     }
@@ -1658,60 +1627,172 @@ impl TaskListView {
 
     /// 行（とサブタスク・コメント欄）を `body` に積む。
     #[allow(clippy::too_many_arguments)] // 描画の文脈をまとめて受け取る
-    fn push_row(
-        &self,
-        id: Uuid,
-        depth: u8,
-        group_status: Option<Uuid>,
-        project_mode: bool,
-        palette: Palette,
-        body: &mut Vec<AnyElement>,
-        visible_rows: &mut Vec<(Uuid, usize)>,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(row) = self.rows.get(&id).cloned() else {
+    /// グループを項目の並びに展開する。要素は作らないので全件でも軽い。
+    fn build_items(&self, groups: &[GroupView]) -> Vec<Item> {
+        let mut items = vec![];
+        for (ix, group) in groups.iter().enumerate() {
+            let collapsed = self.collapsed.contains(&group.key);
+            items.push(Item::Header {
+                group: ix,
+                collapsed,
+            });
+            if collapsed {
+                continue;
+            }
+            let more = group.more.is_some() && !group.failed;
+            if group.more_on_top && more {
+                items.push(Item::More(ix));
+            }
+            if group.ids.is_empty() && !group.failed {
+                items.push(Item::GroupEmpty(ix));
+            }
+            for id in &group.ids {
+                self.push_row_items(*id, 0, group.status_id, &mut items);
+            }
+            if !group.more_on_top && more {
+                items.push(Item::More(ix));
+            }
+            if group.failed {
+                items.push(Item::Failed(ix));
+            }
+        }
+        items.push(Item::Bottom);
+        items
+    }
+
+    fn push_row_items(&self, id: Uuid, depth: u8, status: Option<Uuid>, items: &mut Vec<Item>) {
+        if !self.rows.contains_key(&id) {
             return;
-        };
-        visible_rows.push((id, body.len()));
-        body.push(
-            self.render_row(row, depth, group_status, project_mode, palette, cx)
-                .into_any_element(),
-        );
+        }
+        items.push(Item::Row { id, depth, status });
         if self.comment_open == Some(id) {
-            body.push(self.render_comment_box(palette, cx));
+            items.push(Item::Comment(id));
         }
         if depth == 0 && self.expanded.contains(&id) {
-            let children = self.children.get(&id);
-            let ids = children.map(|c| c.ids.clone()).unwrap_or_default();
+            let ids = self
+                .children
+                .get(&id)
+                .map(|c| c.ids.clone())
+                .unwrap_or_default();
             if ids.is_empty() {
-                let text = match children {
+                items.push(Item::SubtasksEmpty(id));
+            }
+            for child in ids {
+                self.push_row_items(child, 1, status, items);
+            }
+        }
+    }
+
+    /// 変わった範囲だけ list に伝える（全体を差し替えるとスクロール位置が先頭に戻る）。
+    fn sync_items(&mut self, items: Vec<Item>) {
+        self.visible_rows = items
+            .iter()
+            .enumerate()
+            .filter_map(|(ix, item)| match item {
+                Item::Row { id, .. } => Some((*id, ix)),
+                _ => None,
+            })
+            .collect();
+        if items == self.items {
+            return;
+        }
+        let (start, old_end, new_end) = changed_range(&self.items, &items);
+        self.list_state.splice(start..old_end, new_end - start);
+        self.items = items;
+    }
+
+    fn render_item(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let palette = Palette::new(cx);
+        let Some(item) = self.items.get(ix).cloned() else {
+            return div().into_any_element();
+        };
+        let group = |g: usize| self.view_groups.get(g);
+        match item {
+            Item::Header {
+                group: g,
+                collapsed,
+            } => match group(g) {
+                Some(group) => self.render_group_header(group, collapsed, palette.muted, cx),
+                None => div().into_any_element(),
+            },
+            Item::More(g) => match group(g) {
+                Some(group) => {
+                    let remaining = group.more.unwrap_or(0);
+                    self.render_more_button(group, remaining, cx)
+                }
+                None => div().into_any_element(),
+            },
+            Item::GroupEmpty(g) => div()
+                .px_3()
+                .py_2()
+                .text_sm()
+                .text_color(palette.muted)
+                .child(if group(g).is_some_and(|g| g.loading) {
+                    t!("tasks.list.loading")
+                } else {
+                    t!("tasks.list.group_empty")
+                })
+                .into_any_element(),
+            Item::Failed(g) => {
+                let status = group(g).and_then(|g| g.status_id);
+                self.render_group_failed(status, palette, cx)
+            }
+            Item::Row { id, depth, status } => match self.rows.get(&id).cloned() {
+                Some(row) => {
+                    let project_mode = self.project().is_some();
+                    self.render_row(row, depth, status, project_mode, palette, cx)
+                }
+                None => div().into_any_element(),
+            },
+            Item::Comment(_) => self.render_comment_box(palette, cx),
+            Item::SubtasksEmpty(id) => {
+                let text = match self.children.get(&id) {
                     Some(c) if c.failed => t!("tasks.list.load_failed"),
                     Some(c) if !c.loading => t!("tasks.list.subtasks_empty"),
                     _ => t!("tasks.list.loading"),
                 };
-                body.push(
-                    div()
-                        .pl(px(64.))
-                        .py_1p5()
-                        .text_xs()
-                        .text_color(palette.muted)
-                        .child(text)
-                        .into_any_element(),
-                );
+                div()
+                    .pl(px(64.))
+                    .py_1p5()
+                    .text_xs()
+                    .text_color(palette.muted)
+                    .child(text)
+                    .into_any_element()
             }
-            for child in ids {
-                self.push_row(
-                    child,
-                    1,
-                    group_status,
-                    project_mode,
-                    palette,
-                    body,
-                    visible_rows,
-                    cx,
-                );
-            }
+            Item::Bottom => div().h_4().into_any_element(),
         }
+    }
+
+    fn render_group_failed(
+        &self,
+        status: Option<Uuid>,
+        palette: Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py_2()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(palette.danger)
+                    .child(t!("tasks.list.load_failed")),
+            )
+            .when_some(status, |d, status| {
+                d.child(
+                    Button::new(SharedString::from(format!("retry-{status}")))
+                        .outline()
+                        .compact()
+                        .label(t!("tasks.list.retry"))
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.load_more_group(status, cx)),
+                        ),
+                )
+            })
+            .into_any_element()
     }
 
     // GPUI の大きな一時値をセルごとのフレームに分け、Windows のスタックに収める。
@@ -2272,6 +2353,20 @@ impl TaskListView {
 }
 
 /// 旗アイコン + 優先度名。アイコンと文字の両方に優先度の色を載せる（Web と同じ）。
+/// 前後の一致を除いた、変わった範囲 (開始, 旧の終わり, 新の終わり)。
+fn changed_range<T: PartialEq>(old: &[T], new: &[T]) -> (usize, usize, usize) {
+    let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let max_suffix = old.len().min(new.len()) - prefix;
+    let suffix = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take(max_suffix)
+        .take_while(|(a, b)| a == b)
+        .count();
+    (prefix, old.len() - suffix, new.len() - suffix)
+}
+
 fn priority_chip(priority: TaskPriority) -> Div {
     div()
         .flex()
@@ -2286,7 +2381,7 @@ fn priority_chip(priority: TaskPriority) -> Div {
 #[cfg(test)]
 mod tests {
     // `super::*` だと gpui の `#[test]` マクロが std のものを隠すので個別に import する。
-    use super::{Sort, SortColumn, due_bucket};
+    use super::{Sort, SortColumn, changed_range, due_bucket};
     use crate::model::TaskRow;
     use api::types::TaskPriority;
     use chrono::{Local, TimeZone, Utc};
@@ -2314,6 +2409,15 @@ mod tests {
         let mut rows = rows.to_vec();
         rows.sort_by(|a, b| sort.compare(a, b));
         rows.into_iter().map(|r| r.title).collect()
+    }
+
+    #[test]
+    fn changed_range_keeps_common_ends() {
+        assert_eq!(changed_range(&[1, 2, 3], &[1, 2, 3]), (3, 3, 3));
+        assert_eq!(changed_range(&[1, 2, 3], &[1, 9, 9, 3]), (1, 2, 3));
+        assert_eq!(changed_range(&[1, 2, 3], &[1, 3]), (1, 2, 1));
+        assert_eq!(changed_range(&[1, 1], &[1, 1, 1]), (2, 2, 3));
+        assert_eq!(changed_range::<i32>(&[], &[1]), (0, 0, 1));
     }
 
     #[test]
