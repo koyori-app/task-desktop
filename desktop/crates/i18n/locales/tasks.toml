@@ -35,7 +35,6 @@
 "detail.statuses_error" = { ja = "ステータスを読み込めませんでした: {error}", en = "Could not load statuses: {error}" }
 "detail.assignees_error" = { ja = "担当者を読み込めませんでした: {error}", en = "Could not load assignees: {error}" }
 "detail.comments_error" = { ja = "コメントを読み込めませんでした: {error}", en = "Could not load comments: {error}" }
-"detail.due_invalid" = { ja = "期限は YYYY-MM-DD で入力してください", en = "Due date must be YYYY-MM-DD" }
 "detail.loading" = { ja = "読み込み中…", en = "Loading…" }
 "detail.select_task" = { ja = "タスクを選ぶと詳細が表示されます", en = "Select a task to view its details" }
 "detail.unassigned" = { ja = "未割り当て", en = "Unassigned" }
@@ -47,8 +46,10 @@
 "detail.priority" = { ja = "優先度", en = "Priority" }
 "detail.assignees" = { ja = "担当者", en = "Assignees" }
 "detail.due" = { ja = "期限", en = "Due" }
-"detail.apply" = { ja = "適用", en = "Apply" }
-"detail.clear_due_tooltip" = { ja = "空欄のまま適用すると期限を解除します", en = "Leave empty and apply to clear the due date" }
+"detail.due_placeholder" = { ja = "期限なし", en = "No due date" }
+"detail.due_today" = { ja = "今日", en = "Today" }
+"detail.due_tomorrow" = { ja = "明日", en = "Tomorrow" }
+"detail.due_next_week" = { ja = "1 週間後", en = "In a week" }
 "detail.description" = { ja = "説明", en = "Description" }
 "detail.edit" = { ja = "編集", en = "Edit" }
 "detail.cancel" = { ja = "キャンセル", en = "Cancel" }

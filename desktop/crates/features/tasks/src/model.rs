@@ -153,8 +153,7 @@ pub fn priority_color(priority: TaskPriority) -> Hsla {
 }
 
 /// A date entered by the user belongs to their local calendar day.
-pub fn due_timestamp(value: &str, timezone: &impl TimeZone) -> Option<DateTime<Utc>> {
-    let date = NaiveDate::parse_from_str(value, "%Y-%m-%d").ok()?;
+pub fn due_timestamp(date: NaiveDate, timezone: &impl TimeZone) -> Option<DateTime<Utc>> {
     timezone
         .from_local_datetime(&date.and_hms_opt(0, 0, 0)?)
         .earliest()
@@ -234,12 +233,12 @@ mod tests {
     fn entered_due_day_roundtrips_east_and_west_of_utc() {
         for seconds in [9 * 3600, -7 * 3600] {
             let timezone = chrono::FixedOffset::east_opt(seconds).unwrap();
-            let due = due_timestamp("2026-09-24", &timezone).unwrap();
+            let date = NaiveDate::from_ymd_opt(2026, 9, 24).unwrap();
+            let due = due_timestamp(date, &timezone).unwrap();
             assert_eq!(
                 due.with_timezone(&timezone).format("%Y-%m-%d").to_string(),
                 "2026-09-24"
             );
         }
-        assert!(due_timestamp("2026-02-30", &Utc).is_none());
     }
 }

@@ -11,7 +11,7 @@ use api::types::{
     UpdateTaskRequest, UserSummary,
 };
 use api::{Client, MyTasksQuery, TasksQuery};
-use chrono::{Local, NaiveDate, TimeZone, Utc};
+use chrono::{Local, NaiveDate};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::calendar::{Calendar, CalendarEvent, CalendarState, Date};
@@ -27,8 +27,8 @@ use uuid::Uuid;
 
 use crate::avatar::user_avatar;
 use crate::model::{
-    PRIORITIES, RowAssignee, TaskRow, due_label, is_overdue, parse_hex_color, priority_color,
-    priority_label,
+    PRIORITIES, RowAssignee, TaskRow, due_label, due_timestamp, is_overdue, parse_hex_color,
+    priority_color, priority_label,
 };
 
 const PAGE_SIZE: u32 = 50;
@@ -931,12 +931,7 @@ impl TaskListView {
     }
 
     fn set_row_due(&mut self, id: Uuid, date: Option<NaiveDate>, cx: &mut Context<Self>) {
-        let due = date.and_then(|d| {
-            Local
-                .from_local_datetime(&d.and_hms_opt(0, 0, 0)?)
-                .earliest()
-                .map(|d| d.with_timezone(&Utc))
-        });
+        let due = date.and_then(|d| due_timestamp(d, &Local));
         let req = match due {
             Some(due) => UpdateTaskRequest {
                 soft_deadline: Some(due),

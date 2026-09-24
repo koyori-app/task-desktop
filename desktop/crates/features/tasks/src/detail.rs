@@ -11,9 +11,13 @@ use api::types::{
     AssigneeInput, CommentThread, CreateCommentRequest, ProjectStatusResponse, TaskAssigneeSummary,
     TaskDetailResponse, TaskPriority, UpdateTaskRequest, UserSummary,
 };
-use chrono::Local;
+use chrono::{Days, Local, NaiveDate};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::calendar::Date;
+use gpui_kit::component::date_picker::{
+    DatePicker, DatePickerEvent, DatePickerState, DateRangePreset,
+};
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
@@ -44,7 +48,7 @@ pub struct TaskDetailView {
     client_generation: u64,
     error: Option<String>,
     title_input: Entity<InputState>,
-    due_input: Entity<InputState>,
+    due_picker: Entity<DatePickerState>,
     comment_input: Entity<InputState>,
     description_input: Entity<TextareaState>,
     editing_description: bool,
@@ -68,7 +72,7 @@ impl TaskDetailView {
         let title_input = cx.new(|cx| {
             InputState::new(window, cx).placeholder(t!("tasks.detail.title_placeholder"))
         });
-        let due_input = cx.new(|cx| InputState::new(window, cx).placeholder("YYYY-MM-DD"));
+        let due_picker = cx.new(|cx| DatePickerState::new(window, cx).date_format("%Y-%m-%d"));
         let comment_input = cx.new(|cx| {
             InputState::new(window, cx).placeholder(t!("tasks.detail.comment_placeholder"))
         });
@@ -78,10 +82,11 @@ impl TaskDetailView {
                     this.save_title(cx);
                 }
             }),
-            cx.subscribe(&due_input, |this, _, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    this.apply_due(cx);
-                }
+            cx.subscribe(&due_picker, |this, _, event: &DatePickerEvent, cx| {
+                let DatePickerEvent::Change(Date::Single(date)) = event else {
+                    return;
+                };
+                this.apply_due(*date, cx);
             }),
             cx.subscribe(&comment_input, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
@@ -104,7 +109,7 @@ impl TaskDetailView {
             client_generation: 0,
             error: None,
             title_input,
-            due_input,
+            due_picker,
             comment_input,
             description_input: cx.new(|cx| {
                 TextareaState::new(window, cx)
@@ -405,24 +410,18 @@ impl TaskDetailView {
         );
     }
 
-    fn apply_due(&mut self, cx: &mut Context<Self>) {
-        let text = self.due_input.read(cx).value().trim().to_string();
-        let req = if text.is_empty() {
-            UpdateTaskRequest {
+    /// `None` は期限を外す（soft / hard の両方）。
+    fn apply_due(&mut self, date: Option<NaiveDate>, cx: &mut Context<Self>) {
+        let req = match date.and_then(|d| due_timestamp(d, &Local)) {
+            Some(dt) => UpdateTaskRequest {
+                soft_deadline: Some(dt),
+                ..Default::default()
+            },
+            None => UpdateTaskRequest {
                 clear_soft_deadline: Some(true),
                 clear_hard_deadline: Some(true),
                 ..Default::default()
-            }
-        } else {
-            let Some(dt) = due_timestamp(&text, &Local) else {
-                self.error = Some(t!("tasks.detail.due_invalid").into());
-                cx.notify();
-                return;
-            };
-            UpdateTaskRequest {
-                soft_deadline: Some(dt),
-                ..Default::default()
-            }
+            },
         };
         let due = req.soft_deadline;
         let prev = self.detail.as_ref().and_then(|d| d.soft_deadline);
@@ -582,23 +581,21 @@ impl Render for TaskDetailView {
             self.comment_input
                 .update(cx, |s, cx| s.set_value("", window, cx));
         }
+        // 期限は保存値が変わるたび（失敗時の巻き戻しを含む）に合わせる。
+        let due = detail
+            .soft_deadline
+            .or(detail.hard_deadline)
+            .map(|d| d.with_timezone(&Local).date_naive());
+        if self.due_picker.read(cx).date() != Date::Single(due) {
+            self.due_picker
+                .update(cx, |s, cx| s.set_date(Date::Single(due), window, cx));
+        }
         // title input は task が変わった時だけ detail のタイトルに同期。
         if self.title_synced != Some(detail.id) {
             self.title_synced = Some(detail.id);
             let t = detail.title.clone();
             self.title_input
                 .update(cx, |s, cx| s.set_value(t, window, cx));
-            self.due_input.update(cx, |s, cx| {
-                s.set_value(
-                    detail
-                        .soft_deadline
-                        .or(detail.hard_deadline)
-                        .map(|d| d.with_timezone(&Local).format("%Y-%m-%d").to_string())
-                        .unwrap_or_default(),
-                    window,
-                    cx,
-                )
-            });
             self.description_input.update(cx, |s, cx| {
                 s.set_value(detail.description.clone().unwrap_or_default(), window, cx)
             });
@@ -870,29 +867,14 @@ impl Render for TaskDetailView {
                             .child(property(
                                 muted,
                                 t!("tasks.detail.due"),
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(
-                                        div().w(px(160.)).child(
-                                            Input::new(&self.due_input)
-                                                .id("task-due")
-                                                .disabled(self.updating),
-                                        ),
-                                    )
-                                    .child(
-                                        Button::new("apply-due")
-                                            .disabled(self.updating)
-                                            .ghost()
-                                            .compact()
-                                            .label(t!("tasks.detail.apply"))
-                                            .tooltip(t!("tasks.detail.clear_due_tooltip"))
-                                            .on_click(
-                                                cx.listener(|this, _, _, cx| this.apply_due(cx)),
-                                            ),
-                                    ),
+                                // 選ぶとすぐ保存する。× で期限を外す。
+                                div().w(px(180.)).child(
+                                    DatePicker::new(&self.due_picker)
+                                        .placeholder(t!("tasks.detail.due_placeholder"))
+                                        .cleanable(true)
+                                        .presets(due_presets())
+                                        .disabled(self.updating),
+                                ),
                             )),
                     )
                     .child(
@@ -1100,6 +1082,22 @@ impl Render for TaskDetailView {
 impl EventEmitter<TaskDetailEvent> for TaskDetailView {}
 
 /// ラベル列を揃えた 1 行分のプロパティ。
+/// 期限のよく使う候補（今日 / 明日 / 1 週間後）。
+fn due_presets() -> Vec<DateRangePreset> {
+    let today = Local::now().date_naive();
+    [
+        (t!("tasks.detail.due_today"), 0),
+        (t!("tasks.detail.due_tomorrow"), 1),
+        (t!("tasks.detail.due_next_week"), 7),
+    ]
+    .into_iter()
+    .filter_map(|(label, days)| {
+        let date = today.checked_add_days(Days::new(days))?;
+        Some(DateRangePreset::single(label, date))
+    })
+    .collect()
+}
+
 /// `current` の次のステータス（position 順）。最後か見つからなければ None。
 fn next_status(statuses: &[ProjectStatusResponse], current: Uuid) -> Option<ProjectStatusResponse> {
     let mut ordered: Vec<&ProjectStatusResponse> = statuses.iter().collect();
