@@ -1,4 +1,4 @@
-//! §15 一覧。My Tasks / Today / Upcoming / Project の 4 モードを 1 View で持つ。
+//! §15 一覧。My Tasks / Project の 2 モードを 1 View で持つ。
 //!
 //! 見た目と操作は Web（koyori-app/task の TaskGroupedList / TaskGroupedRow）に合わせる:
 //! ステータス別グループ、列見出しからの並べ替え、行からの担当者・期限・優先度・
@@ -158,7 +158,7 @@ struct Children {
 
 /// 描画するグループ。
 struct GroupView {
-    /// 折りたたみ状態の鍵。Project は status id、My Tasks はステータス名。
+    /// 折りたたみ状態の鍵。Project は status id、My Tasks は `due:<区分>`。
     key: String,
     name: String,
     color: Option<Hsla>,
@@ -173,6 +173,37 @@ struct GroupView {
     more_on_top: bool,
 }
 
+/// My Tasks の期限区分（鍵, 色）。並びは表示順で、`due_bucket` の返す index と対応する。
+const DUE_BUCKETS: [(&str, Option<&str>); 5] = [
+    ("overdue", Some("#e5484d")),
+    ("today", Some("#1f6feb")),
+    ("upcoming", Some("#8b5cf6")),
+    ("no_due", None),
+    ("done", Some("#238636")),
+];
+
+fn due_bucket_name(ix: usize) -> &'static str {
+    match ix {
+        0 => t!("tasks.list.group_overdue"),
+        1 => t!("tasks.list.group_today"),
+        2 => t!("tasks.list.group_upcoming"),
+        3 => t!("tasks.list.group_no_due"),
+        _ => t!("tasks.list.group_done"),
+    }
+}
+
+fn due_bucket(row: &TaskRow, today: NaiveDate) -> usize {
+    if row.is_done {
+        return 4;
+    }
+    match row.due.map(|d| d.with_timezone(&Local).date_naive()) {
+        Some(d) if d < today => 0,
+        Some(d) if d == today => 1,
+        Some(_) => 2,
+        None => 3,
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Palette {
     muted: Hsla,
@@ -185,8 +216,6 @@ struct Palette {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ListMode {
     MyTasks,
-    Today,
-    Upcoming,
     Project { id: Uuid, key: String },
 }
 
@@ -395,7 +424,6 @@ impl TaskListView {
             self.reload_project(client, tenant, project, key, generation, cx);
             return;
         }
-        let mode = self.mode.clone();
         cx.spawn(async move |this, cx| {
             let res = async {
                 let mut all = Vec::new();
@@ -415,28 +443,7 @@ impl TaskListView {
                         break;
                     }
                 }
-                let today = Local::now().date_naive();
-                let rows: Vec<TaskRow> = match mode {
-                    // §15: Today = 期限切れ含む今日まで。Upcoming = 明日以降。
-                    ListMode::Today => all
-                        .into_iter()
-                        .filter(|r| {
-                            r.due
-                                .map(|d| d.with_timezone(&Local).date_naive() <= today)
-                                .unwrap_or(false)
-                        })
-                        .collect(),
-                    ListMode::Upcoming => all
-                        .into_iter()
-                        .filter(|r| {
-                            r.due
-                                .map(|d| d.with_timezone(&Local).date_naive() > today)
-                                .unwrap_or(false)
-                        })
-                        .collect(),
-                    _ => all,
-                };
-                Ok::<_, api::ApiError>(rows)
+                Ok::<_, api::ApiError>(all)
             }
             .await;
             let _ = this.update(cx, |this, cx| {
@@ -1091,8 +1098,7 @@ impl TaskListView {
         cx.notify();
     }
 
-    /// 描画用のグループ。Project はステータス別に取得したもの、My Tasks は
-    /// プロジェクトをまたぐのでステータス名でまとめる。
+    /// 描画用のグループ。Project はステータス別に取得したもの、My Tasks は期限別。
     fn groups(&self) -> Vec<GroupView> {
         if self.project().is_some() {
             return self
@@ -1122,50 +1128,39 @@ impl TaskListView {
                 })
                 .collect();
         }
-        let mut groups: Vec<(GroupView, (bool, i32))> = vec![];
+        // My Tasks はプロジェクトをまたぐので期限で分ける（旧 Today / Upcoming を統合）。
+        let today = Local::now().date_naive();
+        let mut buckets: [Vec<Uuid>; DUE_BUCKETS.len()] = Default::default();
         for id in &self.order {
-            let Some(row) = self.rows.get(id) else {
-                continue;
-            };
-            let key = row.status_name.to_lowercase();
-            if let Some((group, _)) = groups.iter_mut().find(|(g, _)| g.key == key) {
-                group.ids.push(*id);
-                group.count += 1;
-                continue;
+            if let Some(row) = self.rows.get(id) {
+                buckets[due_bucket(row, today)].push(*id);
             }
-            // 完了系は後ろ、それ以外はプロジェクトでの並び順。
-            let rank = self
-                .statuses
-                .get(&row.project_id)
-                .and_then(|ss| ss.iter().find(|s| s.id == row.status_id))
-                .map(|s| (s.is_done_state, s.position))
-                .unwrap_or((row.is_done, i32::MAX));
-            groups.push((
+        }
+        DUE_BUCKETS
+            .iter()
+            .zip(buckets)
+            .enumerate()
+            .filter(|(_, (_, ids))| !ids.is_empty())
+            .map(|(ix, ((key, color), mut ids))| {
+                match self.sort {
+                    Some(sort) => ids.sort_by(|a, b| sort.compare(&self.rows[a], &self.rows[b])),
+                    // 既定は期限の近い順（期限なし・完了は取得順のまま）。
+                    None => ids.sort_by_key(|id| self.rows[id].due),
+                }
                 GroupView {
-                    key,
-                    name: row.status_name.clone(),
-                    color: parse_hex_color(&row.status_color),
-                    ids: vec![*id],
-                    count: 1,
+                    key: format!("due:{key}"),
+                    name: due_bucket_name(ix).into(),
+                    color: color.and_then(parse_hex_color),
+                    count: ids.len() as i64,
+                    ids,
                     status_id: None,
                     more: None,
                     loading: false,
                     failed: false,
                     more_on_top: false,
-                },
-                rank,
-            ));
-        }
-        groups.sort_by_key(|(_, rank)| *rank);
-        let mut groups: Vec<GroupView> = groups.into_iter().map(|(g, _)| g).collect();
-        if let Some(sort) = self.sort {
-            for group in &mut groups {
-                group
-                    .ids
-                    .sort_by(|a, b| sort.compare(&self.rows[a], &self.rows[b]));
-            }
-        }
-        groups
+                }
+            })
+            .collect()
     }
 
     fn create_task(&mut self, cx: &mut Context<Self>) {
@@ -1311,8 +1306,6 @@ impl Render for TaskListView {
         let muted = palette.muted;
         let empty_text = match self.mode {
             ListMode::MyTasks => t!("tasks.list.empty_my"),
-            ListMode::Today => t!("tasks.list.empty_today"),
-            ListMode::Upcoming => t!("tasks.list.empty_upcoming"),
             ListMode::Project { .. } => t!("tasks.list.empty_project"),
         };
         let project_mode = self.project().is_some();
@@ -2191,10 +2184,10 @@ fn priority_chip(priority: TaskPriority) -> Div {
 #[cfg(test)]
 mod tests {
     // `super::*` だと gpui の `#[test]` マクロが std のものを隠すので個別に import する。
-    use super::{Sort, SortColumn};
+    use super::{Sort, SortColumn, due_bucket};
     use crate::model::TaskRow;
     use api::types::TaskPriority;
-    use chrono::{TimeZone, Utc};
+    use chrono::{Local, TimeZone, Utc};
 
     fn row(title: &str, priority: TaskPriority, due_day: Option<u32>) -> TaskRow {
         TaskRow {
@@ -2219,6 +2212,28 @@ mod tests {
         let mut rows = rows.to_vec();
         rows.sort_by(|a, b| sort.compare(a, b));
         rows.into_iter().map(|r| r.title).collect()
+    }
+
+    #[test]
+    fn my_tasks_groups_by_due_date() {
+        let today = Local::now().date_naive();
+        let at = |days: i64| {
+            let date = today + chrono::Duration::days(days);
+            Local
+                .from_local_datetime(&date.and_hms_opt(12, 0, 0).unwrap())
+                .unwrap()
+                .with_timezone(&Utc)
+        };
+        let mut r = row("x", TaskPriority::Medium, None);
+        assert_eq!(due_bucket(&r, today), 3);
+        r.due = Some(at(-1));
+        assert_eq!(due_bucket(&r, today), 0);
+        r.due = Some(at(0));
+        assert_eq!(due_bucket(&r, today), 1);
+        r.due = Some(at(1));
+        assert_eq!(due_bucket(&r, today), 2);
+        r.is_done = true;
+        assert_eq!(due_bucket(&r, today), 4);
     }
 
     #[test]

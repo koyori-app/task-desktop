@@ -291,8 +291,6 @@ Backend の種別をそのまま使う（task.txt §5）。
 │ Sidebar     │ Content             │ Detail           │
 │             │                     │                  │
 │ My Tasks    │                     │                  │
-│ Today       │                     │                  │
-│ Upcoming    │                     │                  │
 │             │                     │                  │
 │ Projects    │                     │                  │
 │             │                     │                  │
@@ -300,8 +298,9 @@ Backend の種別をそのまま使う（task.txt §5）。
 └─────────────┴─────────────────────┴──────────────────┘
 ```
 
-- **Inbox は置かない**（Koyori に対応する概念が無い）。My Tasks は `/v1/users/me/tasks`、
-  Today / Upcoming はその結果を `due_date` でクライアント側で分ける
+- **Inbox は置かない**（Koyori に対応する概念が無い）。My Tasks は `/v1/users/me/tasks`。
+  Today / Upcoming は別画面にせず、My Tasks の中を期限で
+  「期限切れ / 今日 / 今後 / 期限なし / 完了」に分けて表示する
 - テナントは Header で切り替える。Sidebar の Projects は選択中テナントのもの
 - gpui-kit の Dock / Resizable を使い、レイアウト状態はローカルに保存する
 

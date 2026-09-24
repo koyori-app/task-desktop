@@ -63,8 +63,6 @@ struct PaletteEntry {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Route {
     MyTasks,
-    Today,
-    Upcoming,
     Notifications,
     Project {
         id: uuid::Uuid,
@@ -699,12 +697,6 @@ impl AppShell {
             Route::MyTasks => self
                 .task_list
                 .update(cx, |l, cx| l.set_mode(ListMode::MyTasks, cx)),
-            Route::Today => self
-                .task_list
-                .update(cx, |l, cx| l.set_mode(ListMode::Today, cx)),
-            Route::Upcoming => self
-                .task_list
-                .update(cx, |l, cx| l.set_mode(ListMode::Upcoming, cx)),
             Route::Project { id, label } => {
                 let key = label.clone();
                 self.task_list.update(cx, |l, cx| {
@@ -776,21 +768,12 @@ impl AppShell {
     }
 
     fn sidebar(&self, colors: &KoyoriColors, cx: &mut Context<Self>) -> impl IntoElement {
-        let main_group = SidebarGroup::new("").children([
-            self.nav_item(
-                Route::MyTasks,
-                t!("app.nav.my_tasks"),
-                IconName::ListTodo,
-                cx,
-            ),
-            self.nav_item(Route::Today, t!("app.nav.today"), IconName::Calendar, cx),
-            self.nav_item(
-                Route::Upcoming,
-                t!("app.nav.upcoming"),
-                IconName::CalendarClock,
-                cx,
-            ),
-        ]);
+        let main_group = SidebarGroup::new("").children([self.nav_item(
+            Route::MyTasks,
+            t!("app.nav.my_tasks"),
+            IconName::ListTodo,
+            cx,
+        )]);
 
         // Reviews タブや Task 詳細にいる間もどのプロジェクトか分かるよう、
         // route の project で active を決める。
@@ -1209,16 +1192,6 @@ impl AppShell {
                     Route::MyTasks,
                 ));
                 v.push(nav(
-                    t!("app.palette.go_today"),
-                    IconName::Calendar,
-                    Route::Today,
-                ));
-                v.push(nav(
-                    t!("app.palette.go_upcoming"),
-                    IconName::Calendar,
-                    Route::Upcoming,
-                ));
-                v.push(nav(
                     t!("app.palette.go_notifications"),
                     IconName::Bell,
                     Route::Notifications,
@@ -1317,11 +1290,7 @@ impl AppShell {
             PaletteAct::CreateTask => {
                 if !matches!(
                     self.route,
-                    Route::Project { .. }
-                        | Route::MyTasks
-                        | Route::Today
-                        | Route::Upcoming
-                        | Route::TaskDetail { .. }
+                    Route::Project { .. } | Route::MyTasks | Route::TaskDetail { .. }
                 ) {
                     self.navigate(Route::MyTasks, cx);
                 }
@@ -1419,8 +1388,6 @@ impl AppShell {
         // タスク系ルートは全て §15 の一覧を表示。見出しで今どの一覧かを示す。
         let personal = match self.route {
             Route::MyTasks => Some((t!("app.nav.my_tasks"), t!("app.page.my_tasks_desc"))),
-            Route::Today => Some((t!("app.nav.today"), t!("app.page.today_desc"))),
-            Route::Upcoming => Some((t!("app.nav.upcoming"), t!("app.page.upcoming_desc"))),
             _ => None,
         };
         if let Some((title, subtitle)) = personal {
@@ -1480,11 +1447,7 @@ impl AppShell {
         // タスク系ルートでは §15 Detail ペイン。
         if matches!(
             self.route,
-            Route::MyTasks
-                | Route::Today
-                | Route::Upcoming
-                | Route::Project { .. }
-                | Route::TaskDetail { .. }
+            Route::MyTasks | Route::Project { .. } | Route::TaskDetail { .. }
         ) {
             return div()
                 .size_full()

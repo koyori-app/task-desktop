@@ -2,14 +2,10 @@
 # 1 行 1 キーで ja / en を並べる。引数は {name} で埋め込む。
 
 "nav.my_tasks" = { ja = "マイタスク", en = "My Tasks" }
-"nav.today" = { ja = "今日", en = "Today" }
-"nav.upcoming" = { ja = "今後", en = "Upcoming" }
 "nav.projects" = { ja = "プロジェクト", en = "Projects" }
 "nav.notifications" = { ja = "通知", en = "Notifications" }
 "nav.settings" = { ja = "設定", en = "Settings" }
 "page.my_tasks_desc" = { ja = "すべてのプロジェクトで自分が担当しているタスク", en = "Tasks assigned to you across all projects" }
-"page.today_desc" = { ja = "自分が担当で、期限が今日または期限切れのタスク", en = "Assigned to you, due today or overdue" }
-"page.upcoming_desc" = { ja = "自分が担当で、期限が明日以降のタスク", en = "Assigned to you, due after today" }
 "page.project" = { ja = "プロジェクト", en = "Project" }
 "page.project_key" = { ja = "プロジェクト · {key}", en = "Project · {key}" }
 "tab.tasks" = { ja = "タスク", en = "Tasks" }
@@ -44,8 +40,6 @@
 "palette.finding_deferred" = { ja = "指摘を保留にする", en = "Defer Finding" }
 "palette.finding_rejected" = { ja = "指摘を却下する", en = "Reject Finding" }
 "palette.go_my_tasks" = { ja = "マイタスクへ移動", en = "Go to My Tasks" }
-"palette.go_today" = { ja = "今日へ移動", en = "Go to Today" }
-"palette.go_upcoming" = { ja = "今後へ移動", en = "Go to Upcoming" }
 "palette.go_notifications" = { ja = "通知へ移動", en = "Go to Notifications" }
 "palette.go_settings" = { ja = "設定を開く", en = "Go to Settings" }
 "palette.project_tasks" = { ja = "{key}: タスク", en = "{key}: Tasks" }

@@ -12,7 +12,7 @@ Windows の GPUI アプリ実体をローカルのモック API で起動し、�
 
 | 対象 | 確認した操作と結果 |
 |---|---|
-| My Tasks / Today / Upcoming | 今日と将来の期限で一覧が分かれる |
+| My Tasks | 期限切れ / 今日 / 今後 / 期限なし / 完了 のグループに分かれる |
 | Task 一覧・詳細 | 行クリックと Down キーで選択を変更し、選択行に対応する詳細が表示される |
 | Task 作成・編集 | 作成後に Status / Priority / Assignee / Due Date を変更でき、API の保存値も更新される |
 | Comment | Markdown コメントを投稿し、詳細表示と API への保存を確認 |
@@ -54,7 +54,7 @@ gpui-kit の部品を使用し、Koyori 固有の行内容と操作を組み合�
 | §8・§9 常駐・Tray | Open / Notifications / Quit、未読アイコン、Windows の非表示・復帰、macOS Dock badge、Linux tray host 判定 | 背景常駐・Tray 操作・ログイン時起動は実機未検証。Linux は GPUI の hide() 制約により最小化へ fallback |
 | §10 OS 通知 | ローカル設定による種別制御、Finding 本文を含めない文言、クリック callback、Windows の MSIX AUMID 取得 | 登録・署名済み配布物での toast 表示とクリックは未検証 |
 | §11・§12 通知画面 | 既読・一括既読、Task / Review / Unread フィルタ、履歴ページング、未読数、内部遷移、取得世代管理 | 履歴の追加読込と全フィルタの組み合わせは実機未検証 |
-| §14 メイン画面 | My Tasks / Today / Upcoming / Projects、テナント切替、Sidebar / Resizable、分割幅保存 | 分割幅の再起動復元は未検証 |
+| §14 メイン画面 | My Tasks / Projects、テナント切替、Sidebar / Resizable、分割幅保存 | 分割幅の再起動復元は未検証 |
 | §15 Tasks | 一覧・詳細・作成・編集、Status / Priority / Assignee / Due、コメント、完了ステータスに基づく完了操作 | 全フィールドの失敗時ロールバック、全キーボード経路は実機未検証 |
 | §16 Reviews | PR / Round / Finding、履歴、Backend の available_actions / gate を表示、Deferred Task リンク、Draft 一括作成、SHA 検証、repo / host 指定 | 追加済み Draft の編集、他の遷移、Deferred Task リンク、403 / 409 の画面操作は未検証。repo / host の本番 API 契約確認が必要 |
 | §17 Markdown | Task description / Comment / Review summary / Finding body に kit Markdown を使用 | 全表示箇所での長文・コードブロック・折り返しの網羅確認は未実施 |

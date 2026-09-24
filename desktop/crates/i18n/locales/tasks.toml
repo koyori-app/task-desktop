@@ -13,8 +13,11 @@
 "list.more" = { ja = "もっと見る", en = "Load more" }
 "list.loading" = { ja = "読み込み中…", en = "Loading…" }
 "list.empty_my" = { ja = "担当のタスクはありません", en = "No tasks assigned to you" }
-"list.empty_today" = { ja = "今日が期限のタスクはありません", en = "Nothing due today" }
-"list.empty_upcoming" = { ja = "明日以降が期限のタスクはありません", en = "Nothing due after today" }
+"list.group_overdue" = { ja = "期限切れ", en = "Overdue" }
+"list.group_today" = { ja = "今日", en = "Today" }
+"list.group_upcoming" = { ja = "今後", en = "Upcoming" }
+"list.group_no_due" = { ja = "期限なし", en = "No due date" }
+"list.group_done" = { ja = "完了", en = "Done" }
 "list.empty_project" = { ja = "このプロジェクトにはまだタスクがありません", en = "No tasks in this project yet" }
 "list.empty_signed_out" = { ja = "サインインするとタスクが表示されます", en = "Sign in to see tasks" }
 "list.new_task_placeholder" = { ja = "新しいタスクのタイトル…", en = "New task title…" }
