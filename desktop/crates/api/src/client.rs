@@ -330,6 +330,31 @@ impl Client {
         .await
     }
 
+    pub async fn list_labels(
+        &self,
+        tenant: Uuid,
+        project: Uuid,
+    ) -> Result<Vec<types::LabelResponse>> {
+        let c = self.clone();
+        on_runtime(async move {
+            c.send(
+                Method::GET,
+                &[
+                    "v1",
+                    "tenants",
+                    &tenant.to_string(),
+                    "projects",
+                    &project.to_string(),
+                    "labels",
+                ],
+                &[],
+                None,
+            )
+            .await
+        })
+        .await
+    }
+
     pub async fn list_assignable_users(
         &self,
         tenant: Uuid,
