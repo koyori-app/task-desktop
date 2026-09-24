@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use crate::avatar::user_avatar;
 use crate::model::{due_timestamp, parse_hex_color, priority_label};
 use crate::ui::status_pill;
 use api::Client;
@@ -17,7 +18,7 @@ use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, Textar
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::text::TextView;
-use gpui_kit::component::{Disableable, Icon, Theme, WindowExt};
+use gpui_kit::component::{Disableable, Icon, Size, Theme, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use i18n::t;
@@ -633,6 +634,45 @@ impl Render for TaskDetailView {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
+        let assignee_avatars: Vec<_> = detail
+            .assignees
+            .iter()
+            .map(|a| {
+                user_avatar(
+                    &a.user.username,
+                    a.user.avatar_url.as_deref(),
+                    Size::Small,
+                    cx,
+                )
+            })
+            .collect();
+        // 描画中に cx を借りられないので、コメント欄のアイコンは先に作っておく。
+        let mut comment_avatars = self
+            .comments
+            .iter()
+            .map(|cm| {
+                let author = user_avatar(
+                    &cm.user.name,
+                    cm.user.avatar_url.as_deref(),
+                    Size::Small,
+                    cx,
+                );
+                let replies: Vec<_> = cm
+                    .replies
+                    .iter()
+                    .map(|reply| {
+                        user_avatar(
+                            &reply.user.name,
+                            reply.user.avatar_url.as_deref(),
+                            Size::XSmall,
+                            cx,
+                        )
+                    })
+                    .collect();
+                (author, replies)
+            })
+            .collect::<Vec<_>>()
+            .into_iter();
         let task_key = match self.project.and_then(|p| self.project_keys.get(&p)) {
             Some(key) => format!("{key}-{}", detail.seq_id),
             None => format!("#{}", detail.seq_id),
@@ -692,18 +732,44 @@ impl Render for TaskDetailView {
             .compact()
             .dropdown_caret(true)
             .disabled(self.updating || self.assignables.is_empty())
-            .icon(IconName::User)
-            .label(assignee_label)
+            .when(assignee_avatars.is_empty(), |b| b.icon(IconName::User))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .when(!assignee_avatars.is_empty(), |d| {
+                        // 複数人は少し重ねて並べる。
+                        d.child(
+                            div().flex().items_center().children(
+                                assignee_avatars
+                                    .into_iter()
+                                    .enumerate()
+                                    .map(|(ix, avatar)| {
+                                        div().when(ix > 0, |d| d.ml(px(-6.))).child(avatar)
+                                    }),
+                            ),
+                        )
+                    })
+                    .child(assignee_label),
+            )
             .dropdown_menu(move |mut menu, _, _| {
                 for u in &assignables {
                     let (user, owner) = (u.clone(), assignee_owner.clone());
+                    let (name, url) = (u.username.clone(), u.avatar_url.clone());
                     menu = menu.item(
-                        PopupMenuItem::new(u.username.clone())
-                            .checked(assignee_ids.contains(&u.id))
-                            .on_click(move |_, _, cx| {
-                                let _ =
-                                    owner.update(cx, |this, cx| this.toggle_assignee(&user, cx));
-                            }),
+                        PopupMenuItem::element(move |_, cx| {
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(user_avatar(&name, url.as_deref(), Size::Small, cx))
+                                .child(name.clone())
+                        })
+                        .checked(assignee_ids.contains(&u.id))
+                        .on_click(move |_, _, cx| {
+                            let _ = owner.update(cx, |this, cx| this.toggle_assignee(&user, cx));
+                        }),
                     );
                 }
                 menu
@@ -913,6 +979,11 @@ impl Render for TaskDetailView {
                                 },
                             ))
                             .children(self.comments.iter().enumerate().map(|(ix, cm)| {
+                                let (author_avatar, reply_avatars) = comment_avatars
+                                    .next()
+                                    .map(|(author, replies)| (Some(author), replies))
+                                    .unwrap_or_default();
+                                let mut reply_avatars = reply_avatars.into_iter();
                                 div()
                                     .flex()
                                     .flex_col()
@@ -922,7 +993,9 @@ impl Render for TaskDetailView {
                                         div()
                                             .flex()
                                             .flex_row()
+                                            .items_center()
                                             .gap_2()
+                                            .children(author_avatar)
                                             .child(
                                                 div()
                                                     .text_xs()
@@ -956,6 +1029,10 @@ impl Render for TaskDetailView {
                                             .border_color(c.border)
                                             .child(
                                                 div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1p5()
+                                                    .children(reply_avatars.next())
                                                     .text_xs()
                                                     .text_color(c.muted_foreground)
                                                     .child(format!(

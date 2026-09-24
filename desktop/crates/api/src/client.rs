@@ -22,7 +22,7 @@ fn runtime() -> &'static tokio::runtime::Runtime {
     })
 }
 
-async fn on_runtime<F, T>(fut: F) -> T
+pub(crate) async fn on_runtime<F, T>(fut: F) -> T
 where
     F: Future<Output = T> + Send + 'static,
     T: Send + 'static,

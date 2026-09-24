@@ -32,7 +32,28 @@ const REVIEW_1: &str = "88888888-8888-8888-8888-888888888888";
 const REVIEW_2: &str = "99999999-9999-9999-9999-999999999999";
 
 fn user(id: &str, name: &str) -> Value {
-    json!({"id": id, "username": name, "avatar_url": null})
+    json!({"id": id, "username": name, "avatar_url": avatar_url(name)})
+}
+
+/// alice だけアイコン画像あり（yupix は未設定 = 頭文字表示の確認用）。
+fn avatar_url(name: &str) -> Value {
+    if name != "alice" {
+        return Value::Null;
+    }
+    let port = std::env::var("KOYORI_MOCK_PORT").unwrap_or_else(|_| "4199".into());
+    json!(format!("http://127.0.0.1:{port}/avatars/{name}.svg"))
+}
+
+/// 文字を使わない SVG（描画側のフォント有無に左右されない）。
+async fn avatar_image(Path(_file): Path<String>) -> impl IntoResponse {
+    const SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#f472b6"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs>
+<rect width="64" height="64" fill="url(#g)"/>
+<circle cx="32" cy="25" r="11" fill="#fff" fill-opacity="0.92"/>
+<path d="M12 58c2-12 11-18 20-18s18 6 20 18z" fill="#fff" fill-opacity="0.92"/>
+</svg>"##;
+    ([(axum::http::header::CONTENT_TYPE, "image/svg+xml")], SVG)
 }
 
 fn status(id: &str, name: &str, color: &str, pos: i32, done: bool, default_done: bool) -> Value {
@@ -155,7 +176,7 @@ impl Mock {
             json!({
                 "id": Uuid::new_v4(), "body": "モックのコメント本文です。",
                 "created_at": "2026-09-21T09:00:00Z", "updated_at": "2026-09-21T09:00:00Z",
-                "is_deleted": false, "user": {"id": USER_ALICE, "name": "alice", "avatar_url": null},
+                "is_deleted": false, "user": {"id": USER_ALICE, "name": "alice", "avatar_url": avatar_url("alice")},
                 "replies": [],
             }),
             json!({
@@ -166,7 +187,7 @@ impl Mock {
                     "id": Uuid::new_v4(), "body": "スレッド内返信。",
                     "created_at": "2026-09-21T10:30:00Z", "updated_at": "2026-09-21T10:30:00Z",
                     "is_deleted": false,
-                    "user": {"id": USER_ALICE, "name": "alice", "avatar_url": null},
+                    "user": {"id": USER_ALICE, "name": "alice", "avatar_url": avatar_url("alice")},
                 }],
             }),
         ];
@@ -1168,7 +1189,10 @@ fn router(state: Shared) -> Router {
         .layer(axum::middleware::from_fn(log_request))
         .with_state(state);
     // `api` クレートの Client は base（…/api まで）に `v1/...` を継ぐ。
-    Router::new().nest("/api", v1).fallback(fallback)
+    Router::new()
+        .nest("/api", v1)
+        .route("/avatars/{file}", get(avatar_image))
+        .fallback(fallback)
 }
 
 #[tokio::main]
