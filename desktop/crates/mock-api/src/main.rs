@@ -30,6 +30,22 @@ const ST_DOING: &str = "66666666-6666-6666-6666-666666666666";
 const ST_DONE: &str = "77777777-7777-7777-7777-777777777777";
 const REVIEW_1: &str = "88888888-8888-8888-8888-888888888888";
 const REVIEW_2: &str = "99999999-9999-9999-9999-999999999999";
+const LABEL_BUG: &str = "1abe1000-0000-4000-8000-000000000001";
+const LABEL_FEATURE: &str = "1abe1000-0000-4000-8000-000000000002";
+const LABEL_DOCS: &str = "1abe1000-0000-4000-8000-000000000003";
+
+/// `LabelResponse`。spec では `description` が必須の string（null 不可）なので空文字。
+fn label(id: &str, name: &str, color: &str) -> Value {
+    json!({
+        "id": id, "project_id": PROJECT, "name": name, "color": color,
+        "description": "", "icon_url": null,
+    })
+}
+
+/// 期限と作成日時を `Z` 付き RFC 3339 で揃える（一覧の並べ替えで比較する）。
+fn rfc3339(at: chrono::DateTime<chrono::Utc>) -> String {
+    at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
 
 fn user(id: &str, name: &str) -> Value {
     json!({"id": id, "username": name, "avatar_url": avatar_url(name)})
@@ -91,6 +107,7 @@ fn task(
 #[derive(Default)]
 struct Mock {
     tasks: Vec<Value>,
+    labels: Vec<Value>,
     comments: Vec<Value>,
     notifications: Vec<Value>,
     findings: Vec<Value>,
@@ -171,6 +188,82 @@ impl Mock {
         tasks[0]["hard_deadline"] = json!(format!("{today}T09:00:00Z"));
         tasks[1]["hard_deadline"] =
             json!(format!("{}T09:00:00Z", today + chrono::Duration::days(2)));
+
+        let labels = vec![
+            label(LABEL_BUG, "bug", "#ef4444"),
+            label(LABEL_FEATURE, "feature", "#3b82f6"),
+            label(LABEL_DOCS, "docs", "#22c55e"),
+        ];
+        tasks[0]["labels"] = json!([labels[0], labels[1]]);
+        tasks[1]["labels"] = json!([labels[2]]);
+        tasks[2]["labels"] = json!([labels[0]]);
+
+        // MOCK-1 のサブタスク。1 件は親と同じ列、1 件は別の列。
+        // 作成日時は親より前にして既定の並び（created_at_desc）で MOCK-1 を先頭に保つ。
+        let alice = json!([{"role": "assignee", "user": user(USER_ALICE, "alice")}]);
+        let mut sub_same = task(
+            Uuid::new_v4(),
+            5,
+            "サブタスク: ログ出力を確認",
+            ST_TODO,
+            "Medium",
+            json!([]),
+            PROJECT,
+        );
+        let mut sub_other = task(
+            Uuid::new_v4(),
+            6,
+            "サブタスク: API 疎通を確認",
+            ST_DOING,
+            "High",
+            alice.clone(),
+            PROJECT,
+        );
+        for (sub, at) in [
+            (&mut sub_same, "2026-09-20T09:40:00Z"),
+            (&mut sub_other, "2026-09-20T09:30:00Z"),
+        ] {
+            sub["parent_task_id"] = json!(t1);
+            sub["created_at"] = json!(at);
+        }
+        sub_other["labels"] = json!([labels[0]]);
+        tasks.push(sub_same);
+        tasks.push(sub_other);
+
+        // Backlog の読み足し（limit 50）確認用。My Tasks を汚さないよう yupix には振らない。
+        const GENERATED: i32 = 56;
+        let priorities = [
+            "CriticalFire",
+            "Critical",
+            "High",
+            "Medium",
+            "Low",
+            "Trivial",
+        ];
+        let base = chrono::DateTime::parse_from_rfc3339("2026-09-01T00:00:00Z")
+            .unwrap()
+            .to_utc();
+        for n in 1..=GENERATED {
+            let mut t = task(
+                Uuid::new_v4(),
+                6 + n,
+                &format!("Backlog item {n}"),
+                ST_BACKLOG,
+                priorities[(n as usize * 5) % priorities.len()],
+                if n % 4 == 0 { alice.clone() } else { json!([]) },
+                PROJECT,
+            );
+            t["created_at"] = json!(rfc3339(base + chrono::Duration::hours(n.into())));
+            t["updated_at"] = t["created_at"].clone();
+            if n % 3 != 0 {
+                let day = today + chrono::Duration::days(i64::from((n * 7) % 30) - 10);
+                t["soft_deadline"] = json!(format!("{day}T09:00:00Z"));
+            }
+            if n % 10 == 0 {
+                t["labels"] = json!([labels[(n / 10) as usize % labels.len()]]);
+            }
+            tasks.push(t);
+        }
 
         let mut comments = vec![
             json!({
@@ -318,6 +411,7 @@ impl Mock {
 
         Self {
             tasks,
+            labels,
             comments,
             notifications,
             findings,
@@ -326,7 +420,7 @@ impl Mock {
                 json!({"id": Uuid::new_v4(), "name": std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "desktop".into()), "last_used_at": chrono::Utc::now().to_rfc3339(), "expires_at": (chrono::Utc::now() + chrono::Duration::days(90)).to_rfc3339(), "created_at": "2026-09-01T00:00:00Z"}),
                 json!({"id": Uuid::new_v4(), "name": "other-device", "last_used_at": null, "expires_at": "2027-01-01T00:00:00Z", "created_at": "2026-08-01T00:00:00Z"}),
             ],
-            next_seq: 5,
+            next_seq: 7 + GENERATED,
         }
     }
 }
@@ -485,16 +579,180 @@ async fn list_tasks(
     State(m): State<Shared>,
     Path((_, p)): Path<(String, String)>,
     Query(query): Query<std::collections::HashMap<String, String>>,
-) -> Json<Value> {
+) -> axum::response::Response {
+    let bad = |msg: &str| err(StatusCode::BAD_REQUEST, msg).into_response();
+    let flag = |key: &str| match query.get(key).map(String::as_str) {
+        None => Ok(None),
+        Some("true") => Ok(Some(true)),
+        Some("false") => Ok(Some(false)),
+        Some(_) => Err(format!("{key} must be true or false")),
+    };
+    let (root_only, is_archived) = match (flag("root_only"), flag("is_archived")) {
+        (Ok(r), Ok(a)) => (r == Some(true), a),
+        (Err(e), _) | (_, Err(e)) => return bad(&e),
+    };
     let m = m.lock().unwrap();
-    let tasks: Vec<Value> = m
+    let field_is =
+        |t: &Value, key: &str, param: &str| query.get(param).is_none_or(|want| t[key] == *want);
+    let mut tasks: Vec<&Value> = m
         .tasks
         .iter()
         .filter(|t| t["project_id"] == p)
-        .filter(|t| query.get("status_id").is_none_or(|s| t["status_id"] == *s))
-        .cloned()
+        .filter(|t| field_is(t, "status_id", "status_id"))
+        .filter(|t| field_is(t, "priority", "priority"))
+        .filter(|t| field_is(t, "milestone_id", "milestone_id"))
+        .filter(|t| field_is(t, "sprint_id", "sprint_id"))
+        .filter(|t| field_is(t, "parent_task_id", "parent_task_id"))
+        .filter(|t| is_archived.is_none_or(|a| t["is_archived"] == a))
+        .filter(|t| {
+            query.get("assignee_id").is_none_or(|u| {
+                t["assignees"]
+                    .as_array()
+                    .is_some_and(|a| a.iter().any(|x| x["user"]["id"] == *u))
+            })
+        })
+        .filter(|t| {
+            query.get("label_id").is_none_or(|l| {
+                t["labels"]
+                    .as_array()
+                    .is_some_and(|a| a.iter().any(|x| x["id"] == *l))
+            })
+        })
         .collect();
-    Json(json!({"tasks": tasks, "total": tasks.len(), "next_cursor": null}))
+    // 親が「絞り込み後の一覧」に居るものだけを外す（親が別の列なら根として返る）。
+    if root_only {
+        let ids: std::collections::HashSet<&str> =
+            tasks.iter().filter_map(|t| t["id"].as_str()).collect();
+        tasks.retain(|t| {
+            t["parent_task_id"]
+                .as_str()
+                .is_none_or(|parent| !ids.contains(parent))
+        });
+    }
+    let sort = query
+        .get("sort")
+        .map(String::as_str)
+        .unwrap_or("created_at_desc");
+    let Some((field, desc)) = sort
+        .rsplit_once('_')
+        .and_then(|(f, dir)| match dir {
+            "asc" => Some((f, false)),
+            "desc" => Some((f, true)),
+            _ => None,
+        })
+        .filter(|(f, _)| ["created_at", "title", "assignee", "priority", "deadline"].contains(f))
+    else {
+        return bad("unknown sort");
+    };
+    // 同順位は作成日時の新しい順（それも同じなら投入順＝安定ソート）。
+    tasks.sort_by(|a, b| {
+        let primary = match field {
+            "title" => directed(title_key(a).cmp(&title_key(b)), desc),
+            "assignee" => nulls_last(assignee_key(a), assignee_key(b), desc),
+            "priority" => directed(priority_rank(a).cmp(&priority_rank(b)), desc),
+            "deadline" => nulls_last(
+                time_key(a, "soft_deadline"),
+                time_key(b, "soft_deadline"),
+                desc,
+            ),
+            _ => directed(
+                time_key(a, "created_at").cmp(&time_key(b, "created_at")),
+                desc,
+            ),
+        };
+        primary.then_with(|| time_key(b, "created_at").cmp(&time_key(a, "created_at")))
+    });
+    let total = tasks.len();
+    let offset = match (query.get("cursor"), query.get("offset")) {
+        (Some(_), Some(_)) => return bad("cursor and offset are mutually exclusive"),
+        (Some(c), None) => match c.parse::<usize>() {
+            Ok(n) => n,
+            Err(_) => return bad("invalid cursor"),
+        },
+        (None, Some(o)) => match o.parse::<usize>() {
+            Ok(n) => n,
+            Err(_) => return bad("invalid offset"),
+        },
+        (None, None) => 0,
+    };
+    let limit = match query.get("limit").map(|l| l.parse::<usize>()) {
+        None => 50,
+        Some(Ok(n)) => n.clamp(1, 200),
+        Some(Err(_)) => return bad("invalid limit"),
+    };
+    let page: Vec<&Value> = tasks.into_iter().skip(offset).take(limit).collect();
+    let end = offset + page.len();
+    let next_cursor = (end < total).then(|| end.to_string());
+    Json(json!({"tasks": page, "total": total, "next_cursor": next_cursor})).into_response()
+}
+
+fn directed(ord: std::cmp::Ordering, desc: bool) -> std::cmp::Ordering {
+    if desc { ord.reverse() } else { ord }
+}
+
+/// 値の無いもの（未割り当て・期限なし）は昇順でも降順でも末尾。
+fn nulls_last<T: Ord>(a: Option<T>, b: Option<T>, desc: bool) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (a, b) {
+        (Some(a), Some(b)) => directed(a.cmp(&b), desc),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+
+fn title_key(t: &Value) -> String {
+    t["title"].as_str().unwrap_or_default().to_lowercase()
+}
+
+fn assignee_key(t: &Value) -> Option<String> {
+    t["assignees"].as_array()?.first()?["user"]["username"]
+        .as_str()
+        .map(str::to_lowercase)
+}
+
+/// 昇順＝緊急度の高い順。
+fn priority_rank(t: &Value) -> usize {
+    [
+        "CriticalFire",
+        "Critical",
+        "High",
+        "Medium",
+        "Low",
+        "Trivial",
+    ]
+    .iter()
+    .position(|p| t["priority"] == *p)
+    .unwrap_or(usize::MAX)
+}
+
+fn time_key(t: &Value, key: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    chrono::DateTime::parse_from_rfc3339(t[key].as_str()?).ok()
+}
+
+async fn list_labels(State(m): State<Shared>, Path((_, p)): Path<(String, String)>) -> Json<Value> {
+    let m = m.lock().unwrap();
+    Json(json!(
+        m.labels
+            .iter()
+            .filter(|l| l["project_id"] == p)
+            .collect::<Vec<_>>()
+    ))
+}
+
+/// プロジェクトのラベル ID をラベル本体へ。見つからない ID があれば `Err`。
+fn resolve_labels(m: &Mock, project: &Value, ids: &Value) -> Result<Vec<Value>, String> {
+    ids.as_array()
+        .into_iter()
+        .flatten()
+        .map(|id| {
+            m.labels
+                .iter()
+                .find(|l| l["id"] == *id && l["project_id"] == *project)
+                .cloned()
+                .ok_or_else(|| format!("label not found: {id}"))
+        })
+        .collect()
 }
 
 async fn search_tasks(
@@ -586,7 +844,6 @@ async fn create_task(
 ) -> impl IntoResponse {
     let mut m = m.lock().unwrap();
     let seq = m.next_seq;
-    m.next_seq += 1;
     let assignees = body["assignees"]
         .as_array()
         .map(|a| {
@@ -608,11 +865,28 @@ async fn create_task(
         json!(assignees),
         &p,
     );
-    for key in ["description", "soft_deadline", "hard_deadline"] {
+    for key in [
+        "description",
+        "soft_deadline",
+        "hard_deadline",
+        "parent_task_id",
+        "estimated_minutes",
+        "progress_pct",
+        "milestone_id",
+        "sprint_id",
+    ] {
         if !body[key].is_null() {
             t[key] = body[key].clone();
         }
     }
+    match resolve_labels(&m, &json!(p), &body["label_ids"]) {
+        Ok(labels) => t["labels"] = json!(labels),
+        Err(e) => return err(StatusCode::BAD_REQUEST, &e).into_response(),
+    }
+    let now = rfc3339(chrono::Utc::now());
+    t["created_at"] = json!(now);
+    t["updated_at"] = json!(now);
+    m.next_seq += 1;
     m.tasks.push(t.clone());
     Json(t).into_response()
 }
@@ -626,7 +900,29 @@ async fn update_task(
     let Some(i) = find_task(&m, id) else {
         return err(StatusCode::NOT_FOUND, "task not found").into_response();
     };
+    // label_ids（null/未指定なら現状）→ add_label_ids を足す → remove_label_ids を外す。
+    let project = m.tasks[i]["project_id"].clone();
+    let labels = if body["label_ids"].is_null() {
+        Ok(m.tasks[i]["labels"].as_array().cloned().unwrap_or_default())
+    } else {
+        resolve_labels(&m, &project, &body["label_ids"])
+    }
+    .and_then(|mut labels| {
+        for l in resolve_labels(&m, &project, &body["add_label_ids"])? {
+            if !labels.iter().any(|x| x["id"] == l["id"]) {
+                labels.push(l);
+            }
+        }
+        let remove = body["remove_label_ids"].as_array();
+        labels.retain(|l| remove.is_none_or(|r| !r.contains(&l["id"])));
+        Ok(labels)
+    });
+    let labels = match labels {
+        Ok(labels) => labels,
+        Err(e) => return err(StatusCode::BAD_REQUEST, &e).into_response(),
+    };
     let t = &mut m.tasks[i];
+    t["labels"] = json!(labels);
     for key in [
         "title",
         "description",
@@ -659,7 +955,14 @@ async fn update_task(
     if body["clear_description"] == true {
         t["description"] = Value::Null;
     }
-    for key in ["soft_deadline", "hard_deadline"] {
+    for key in [
+        "soft_deadline",
+        "hard_deadline",
+        "estimated_minutes",
+        "milestone_id",
+        "sprint_id",
+        "parent_task_id",
+    ] {
         if body[format!("clear_{key}")] == true {
             t[key] = Value::Null;
         }
@@ -1164,6 +1467,7 @@ fn router(state: Shared) -> Router {
         .route(&format!("{t}/users/me/tasks"), get(my_tasks))
         .route(&format!("{tp}/statuses"), get(statuses))
         .route(&format!("{tp}/assignable-users"), get(assignable_users))
+        .route(&format!("{tp}/labels"), get(list_labels))
         .route(&format!("{tp}/tasks"), get(list_tasks).post(create_task))
         .route(&format!("{tp}/tasks/search"), get(search_tasks))
         .route(
@@ -1348,6 +1652,117 @@ mod tests {
                 .gate,
             Some(api::spec::Gate::Ready)
         );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn task_list_filters_sorts_pages_and_edits_labels() {
+        let (client, server, _) = client().await;
+        let tenant = TENANT.parse().unwrap();
+        let project = PROJECT.parse().unwrap();
+        let labels = client.list_labels(tenant, project).await.unwrap();
+        assert_eq!(labels.len(), 3);
+        assert!(
+            client
+                .list_labels(tenant, PROJECT2.parse().unwrap())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // Backlog の根だけを読み足しで取り切る。
+        let backlog = |cursor: Option<String>| api::TasksQuery {
+            status_id: Some(ST_BACKLOG.parse().unwrap()),
+            root_only: Some(true),
+            cursor,
+            ..Default::default()
+        };
+        let first = client
+            .list_tasks(tenant, project, &backlog(None))
+            .await
+            .unwrap();
+        assert_eq!(first.tasks.len(), 50);
+        assert_eq!(first.total, 57);
+        let rest = client
+            .list_tasks(tenant, project, &backlog(first.next_cursor.clone()))
+            .await
+            .unwrap();
+        assert_eq!(rest.tasks.len(), 7);
+        assert!(rest.next_cursor.is_none());
+
+        // 親と同じ列のサブタスクは root_only で消え、別の列のものは根として残る。
+        let mock1 = client
+            .list_tasks(tenant, project, &Default::default())
+            .await
+            .unwrap()
+            .tasks[0]
+            .clone();
+        let children = client
+            .list_tasks(
+                tenant,
+                project,
+                &api::TasksQuery {
+                    parent_task_id: Some(mock1.id),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(children.total, 2);
+        let roots = |status: &str| api::TasksQuery {
+            status_id: Some(status.parse().unwrap()),
+            root_only: Some(true),
+            ..Default::default()
+        };
+        let todo = client
+            .list_tasks(tenant, project, &roots(ST_TODO))
+            .await
+            .unwrap();
+        assert!(todo.tasks.iter().all(|t| t.parent_task_id.is_none()));
+        let doing = client
+            .list_tasks(tenant, project, &roots(ST_DOING))
+            .await
+            .unwrap();
+        assert!(
+            doing
+                .tasks
+                .iter()
+                .any(|t| t.parent_task_id == Some(mock1.id))
+        );
+
+        let urgent = client
+            .list_tasks(
+                tenant,
+                project,
+                &api::TasksQuery {
+                    sort: Some("priority_asc".into()),
+                    limit: Some(1),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            urgent.tasks[0].priority,
+            api::types::TaskPriority::CriticalFire
+        );
+
+        let replace = serde_json::from_value(json!({"label_ids": [LABEL_DOCS]})).unwrap();
+        let updated = client
+            .update_task(tenant, project, mock1.id, &replace)
+            .await
+            .unwrap();
+        assert_eq!(updated.labels.len(), 1);
+        let add_remove = serde_json::from_value(
+            json!({"add_label_ids": [LABEL_BUG], "remove_label_ids": [LABEL_DOCS]}),
+        )
+        .unwrap();
+        let updated = client
+            .update_task(tenant, project, mock1.id, &add_remove)
+            .await
+            .unwrap();
+        assert_eq!(updated.labels.len(), 1);
+        assert_eq!(updated.labels[0].name, "bug");
         server.abort();
     }
 

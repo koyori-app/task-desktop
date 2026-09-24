@@ -67,3 +67,28 @@
 "due.in_days" = { ja = "{days}日後", en = "in {days}d" }
 "due.month_day" = { ja = "%-m月%-d日", en = "%b %-d" }
 "due.overdue" = { ja = "{days}日超過", en = "{days}d overdue" }
+"list.sort.title_asc" = { ja = "名前の昇順", en = "Name, A to Z" }
+"list.sort.title_desc" = { ja = "名前の降順", en = "Name, Z to A" }
+"list.sort.assignee_asc" = { ja = "担当者名の昇順", en = "Assignee, A to Z" }
+"list.sort.assignee_desc" = { ja = "担当者名の降順", en = "Assignee, Z to A" }
+"list.sort.due_asc" = { ja = "期限が近い順", en = "Due date, soonest first" }
+"list.sort.due_desc" = { ja = "期限が遠い順", en = "Due date, latest first" }
+"list.sort.priority_asc" = { ja = "優先度が高い順", en = "Priority, highest first" }
+"list.sort.priority_desc" = { ja = "優先度が低い順", en = "Priority, lowest first" }
+"list.sort.clear" = { ja = "並べ替えをクリア", en = "Clear sorting" }
+"list.more_remaining" = { ja = "もっと見る（残り {count} 件）", en = "Load more ({count} remaining)" }
+"list.load_failed" = { ja = "読み込みに失敗しました", en = "Failed to load" }
+"list.retry" = { ja = "再試行", en = "Retry" }
+"list.subtasks_expand" = { ja = "サブタスクを展開", en = "Show subtasks" }
+"list.subtasks_collapse" = { ja = "サブタスクを折りたたむ", en = "Hide subtasks" }
+"list.subtasks_empty" = { ja = "サブタスクはありません", en = "No subtasks" }
+"list.labels" = { ja = "ラベル", en = "Labels" }
+"list.labels_empty" = { ja = "ラベルがありません", en = "No labels" }
+"list.assignees" = { ja = "担当者", en = "Assignees" }
+"list.assignees_empty" = { ja = "担当者の候補がいません", en = "No one to assign" }
+"list.set_due" = { ja = "期限を設定", en = "Set due date" }
+"list.clear_due" = { ja = "期限を外す", en = "Clear due date" }
+"list.add_comment" = { ja = "コメントを追加", en = "Add comment" }
+"list.comment_send" = { ja = "送信", en = "Send" }
+"list.comment_close" = { ja = "閉じる", en = "Close" }
+"list.comment_posted" = { ja = "コメントを追加しました", en = "Comment added" }

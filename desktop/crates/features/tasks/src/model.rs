@@ -1,6 +1,6 @@
 //! 一覧行の正規化モデル。MyTaskItem / TaskResponse の両方から作る。
 
-use api::types::{MyTaskItem, TaskPriority, TaskResponse};
+use api::types::{LabelResponse, MyTaskItem, TaskPriority, TaskResponse};
 use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
 use gpui_kit::Hsla;
 use i18n::t;
@@ -23,10 +23,15 @@ pub struct TaskRow {
     pub is_done: bool,
     /// 担当者。My Tasks の API は返さない（全て自分の担当）ので空。
     pub assignees: Vec<RowAssignee>,
+    /// ラベル。My Tasks の API は返さないので空。
+    pub labels: Vec<LabelResponse>,
+    pub parent_task_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]
 pub struct RowAssignee {
+    pub id: Uuid,
+    pub role: String,
     pub name: String,
     pub avatar_url: Option<String>,
 }
@@ -56,6 +61,8 @@ impl TaskRow {
             due: item.soft_deadline.or(item.hard_deadline),
             is_done: false,
             assignees: vec![],
+            labels: vec![],
+            parent_task_id: None,
         }
     }
 
@@ -77,10 +84,14 @@ impl TaskRow {
                 .assignees
                 .iter()
                 .map(|a| RowAssignee {
+                    id: a.user.id,
+                    role: a.role.clone(),
                     name: a.user.username.clone(),
                     avatar_url: a.user.avatar_url.clone(),
                 })
                 .collect(),
+            labels: item.labels.clone(),
+            parent_task_id: item.parent_task_id,
         }
     }
 }
