@@ -17,7 +17,10 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use uuid::Uuid;
 
-use crate::model::{TaskRow, due_label, parse_hex_color};
+use crate::model::{
+    DueTone, TaskRow, due_label, due_tone, parse_hex_color, priority_is_urgent, priority_label,
+};
+use crate::ui::status_pill;
 
 const PAGE_SIZE: u32 = 50;
 
@@ -29,6 +32,7 @@ struct TaskRows {
     loading: bool,
     signed_in: bool,
     more: bool,
+    empty_text: &'static str,
 }
 
 impl ListDelegate for TaskRows {
@@ -60,15 +64,22 @@ impl ListDelegate for TaskRows {
         _: &mut Window,
         cx: &mut Context<ListState<Self>>,
     ) -> impl IntoElement {
+        let muted = Theme::global(cx).semantic_tokens().colors.muted_foreground;
         div()
-            .p_4()
-            .text_sm()
-            .text_color(Theme::global(cx).semantic_tokens().colors.muted_foreground)
-            .child(if self.signed_in {
-                "No tasks"
+            .size_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_2()
+            .p_6()
+            .text_color(muted)
+            .child(Icon::new(IconName::Inbox).size_8())
+            .child(div().text_sm().child(if self.signed_in {
+                self.empty_text
             } else {
                 "Sign in to see tasks"
-            })
+            }))
     }
     fn render_item(
         &mut self,
@@ -77,12 +88,15 @@ impl ListDelegate for TaskRows {
         cx: &mut Context<ListState<Self>>,
     ) -> Option<ListItem> {
         let row = self.rows.get(ix.row)?;
-        let c = Theme::global(cx).semantic_tokens().colors;
+        let (c, danger, warning) = {
+            let t = Theme::global(cx);
+            (t.semantic_tokens().colors, t.danger, t.warning)
+        };
         let id = row.id;
         let owner = self.owner.clone();
         Some(
             ListItem::new(("task-row", ix.row))
-                .h(px(76.))
+                .h(px(64.))
                 .w_full()
                 .child(
                     div()
@@ -138,27 +152,42 @@ impl ListDelegate for TaskRows {
                             div()
                                 .flex()
                                 .items_center()
-                                .gap_2()
+                                .gap_3()
                                 .min_w_0()
                                 .text_xs()
                                 .text_color(c.muted_foreground)
-                                .child(row.seq_key.clone())
+                                .child(div().flex_shrink_0().child(row.seq_key.clone()))
+                                .when(!row.status_name.is_empty(), |d| {
+                                    d.child(status_pill(
+                                        &row.status_name,
+                                        parse_hex_color(&row.status_color)
+                                            .unwrap_or(c.muted_foreground),
+                                    ))
+                                })
                                 .child(
                                     div()
-                                        .text_color(
-                                            parse_hex_color(&row.status_color)
-                                                .unwrap_or(c.muted_foreground),
-                                        )
-                                        .child(row.status_name.clone()),
+                                        .flex_shrink_0()
+                                        .when(priority_is_urgent(row.priority), |d| {
+                                            d.text_color(danger).font_weight(FontWeight::MEDIUM)
+                                        })
+                                        .child(priority_label(row.priority)),
                                 )
-                                .child(div().flex_1().min_w_0().text_ellipsis().child(format!(
-                                    "{}{}",
-                                    row.priority,
-                                    row.due
-                                        .as_ref()
-                                        .map(|due| format!(" · {}", due_label(due)))
-                                        .unwrap_or_default()
-                                ))),
+                                .when_some(row.due.filter(|_| !row.is_done), |d, due| {
+                                    let tone = due_tone(&due);
+                                    d.child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1()
+                                            .min_w_0()
+                                            .when(tone == DueTone::Overdue, |d| {
+                                                d.text_color(danger)
+                                            })
+                                            .when(tone == DueTone::Today, |d| d.text_color(warning))
+                                            .child(Icon::new(IconName::Calendar).size_3())
+                                            .child(div().text_ellipsis().child(due_label(&due))),
+                                    )
+                                }),
                         ),
                 ),
         )
@@ -200,6 +229,8 @@ pub struct TaskListView {
     generation: u64,
     context_generation: u64,
     pending_done: HashSet<Uuid>,
+    /// mode 変更後に render 側で作成欄の placeholder を差し替えるフラグ。
+    placeholder_dirty: bool,
     _subs: Vec<Subscription>,
 }
 
@@ -227,6 +258,7 @@ impl TaskListView {
                     loading: false,
                     signed_in: false,
                     more: false,
+                    empty_text: "No tasks",
                 },
                 window,
                 cx,
@@ -263,6 +295,7 @@ impl TaskListView {
             generation: 0,
             context_generation: 0,
             pending_done: HashSet::new(),
+            placeholder_dirty: true,
             _subs: vec![sub, list_sub],
         }
     }
@@ -276,6 +309,7 @@ impl TaskListView {
             self.statuses.clear();
             self.selected = None;
             self.mode = ListMode::MyTasks;
+            self.placeholder_dirty = true;
         }
         self.client = Some(client);
         self.tenant = tenant;
@@ -305,6 +339,7 @@ impl TaskListView {
             self.context_generation += 1;
             self.creating = false;
             self.clear_create_input = true;
+            self.placeholder_dirty = true;
         }
         self.mode = mode;
         self.rows.clear();
@@ -708,9 +743,25 @@ impl Render for TaskListView {
             self.create_input
                 .update(cx, |s, cx| s.set_value("", window, cx));
         }
+        if self.placeholder_dirty {
+            self.placeholder_dirty = false;
+            // 作成先が見えないと My Tasks で作ったタスクの行き先が分からない。
+            let placeholder = match &self.mode {
+                ListMode::Project { key, .. } => format!("Add a task to {key}…"),
+                _ => "Add a task to your personal project…".into(),
+            };
+            self.create_input
+                .update(cx, |s, cx| s.set_placeholder(placeholder, window, cx));
+        }
         let (c, danger) = {
             let t = Theme::global(cx);
             (t.semantic_tokens().colors, t.danger)
+        };
+        let empty_text = match self.mode {
+            ListMode::MyTasks => "No tasks assigned to you",
+            ListMode::Today => "Nothing due today",
+            ListMode::Upcoming => "Nothing due after today",
+            ListMode::Project { .. } => "No tasks in this project yet",
         };
 
         self.list_state.update(cx, |state, cx| {
@@ -726,6 +777,7 @@ impl Render for TaskListView {
             delegate.loading = self.loading;
             delegate.signed_in = self.client.is_some();
             delegate.more = self.next_cursor.is_some();
+            delegate.empty_text = empty_text;
             state.set_selected_index(self.selected.map(IndexPath::new), window, cx);
             cx.notify();
         });

@@ -5,6 +5,7 @@
 mod detail;
 mod list;
 mod model;
+mod ui;
 
 pub use detail::{TaskDetailEvent, TaskDetailView};
 pub use list::{ListMode, TaskListEvent, TaskListView};

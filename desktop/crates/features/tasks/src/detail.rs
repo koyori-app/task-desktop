@@ -1,7 +1,10 @@
 //! §15 Detail ペイン。Status / Priority / Assignee / DueDate / done の
 //! 編集とコメント表示・投稿。更新は Optimistic + rollback（§23）。
 
-use crate::model::due_timestamp;
+use std::collections::HashMap;
+
+use crate::model::{due_timestamp, parse_hex_color, priority_label};
+use crate::ui::status_pill;
 use api::Client;
 use api::types::{
     AssigneeInput, CommentThread, CreateCommentRequest, ProjectStatusResponse, TaskAssigneeSummary,
@@ -11,9 +14,10 @@ use chrono::Local;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::text::TextView;
-use gpui_kit::component::{Disableable, Selectable, Theme, WindowExt};
+use gpui_kit::component::{Disableable, Icon, Theme, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use uuid::Uuid;
@@ -57,6 +61,8 @@ pub struct TaskDetailView {
     _subs: Vec<Subscription>,
     /// title input をどの task まで同期したか。
     title_synced: Option<Uuid>,
+    /// project_id → key。Detail の見出しを一覧と同じ `KEY-12` 表記にする。
+    project_keys: HashMap<Uuid, String>,
 }
 
 impl TaskDetailView {
@@ -112,7 +118,12 @@ impl TaskDetailView {
             shown_error: None,
             _subs: subs,
             title_synced: None,
+            project_keys: HashMap::new(),
         }
+    }
+
+    pub fn set_project_keys(&mut self, keys: impl IntoIterator<Item = (Uuid, String)>) {
+        self.project_keys = keys.into_iter().collect();
     }
 
     /// 一覧からの選択。各種ロードを投げる。
@@ -530,20 +541,6 @@ impl TaskDetailView {
             cx,
         );
     }
-
-    fn chip(
-        id: impl Into<ElementId>,
-        label: impl Into<SharedString>,
-        active: bool,
-        cx: &mut Context<Self>,
-        on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
-    ) -> Button {
-        Button::new(id)
-            .compact()
-            .label(label)
-            .selected(active)
-            .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
-    }
 }
 
 impl Render for TaskDetailView {
@@ -560,18 +557,26 @@ impl Render for TaskDetailView {
         }
 
         let Some(detail) = self.detail.clone() else {
-            return div().id("task-detail-empty").size_full().p_4().child(
-                div()
-                    .text_sm()
-                    .text_color(c.muted_foreground)
-                    .child(if self.loading {
-                        "Loading…".to_string()
-                    } else {
-                        self.error
-                            .clone()
-                            .unwrap_or_else(|| "Select a task to view its details".into())
-                    }),
-            );
+            return div()
+                .id("task-detail-empty")
+                .size_full()
+                .p_6()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .text_color(c.muted_foreground)
+                .when(!self.loading && self.error.is_none(), |d| {
+                    d.child(Icon::new(IconName::ClipboardList).size_8())
+                })
+                .child(div().text_sm().child(if self.loading {
+                    "Loading…".to_string()
+                } else {
+                    self.error
+                        .clone()
+                        .unwrap_or_else(|| "Select a task to view its details".into())
+                }));
         };
 
         if self.clear_comment_input {
@@ -601,60 +606,102 @@ impl Render for TaskDetailView {
             });
         }
 
-        let status_name = self
+        let muted = c.muted_foreground;
+        let current_status = self
             .statuses
             .iter()
             .find(|s| s.id == detail.status_id)
-            .map(|s| s.name.clone())
-            .unwrap_or_default();
+            .cloned();
+        let has_done_state = self.statuses.iter().any(|s| s.is_done_state);
         let done = self.is_done();
         let cur_status = detail.status_id;
         let cur_priority = detail.priority;
         let assignee_ids: Vec<Uuid> = detail.assignees.iter().map(|a| a.user.id).collect();
+        let assignee_label = if detail.assignees.is_empty() {
+            "Unassigned".to_string()
+        } else {
+            detail
+                .assignees
+                .iter()
+                .map(|a| a.user.username.clone())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let task_key = match self.project.and_then(|p| self.project_keys.get(&p)) {
+            Some(key) => format!("{key}-{}", detail.seq_id),
+            None => format!("#{}", detail.seq_id),
+        };
+        let this = cx.entity().downgrade();
 
-        let mut status_row = div().flex().flex_row().flex_wrap().gap_1();
-        for s in self.statuses.clone() {
-            let id = s.id;
-            status_row = status_row.child(
-                Self::chip(
-                    SharedString::from(format!("st-{}", id.simple())),
-                    s.name,
-                    cur_status == id,
-                    cx,
-                    move |this, cx| this.set_status(id, cx),
-                )
-                .disabled(self.updating),
-            );
-        }
+        let status_statuses = self.statuses.clone();
+        let status_owner = this.clone();
+        let status_button = Button::new("status-select")
+            .outline()
+            .compact()
+            .dropdown_caret(true)
+            .disabled(self.updating || self.statuses.is_empty())
+            .child(match &current_status {
+                Some(s) => status_pill(&s.name, parse_hex_color(&s.color).unwrap_or(muted)),
+                None => div().child("—"),
+            })
+            .dropdown_menu(move |mut menu, _, _| {
+                for s in &status_statuses {
+                    let (id, owner) = (s.id, status_owner.clone());
+                    menu = menu.item(
+                        PopupMenuItem::new(s.name.clone())
+                            .checked(cur_status == id)
+                            .on_click(move |_, _, cx| {
+                                let _ = owner.update(cx, |this, cx| this.set_status(id, cx));
+                            }),
+                    );
+                }
+                menu
+            });
 
-        let mut prio_row = div().flex().flex_row().flex_wrap().gap_1();
-        for p in PRIORITIES {
-            prio_row = prio_row.child(
-                Self::chip(
-                    SharedString::from(format!("pr-{p}")),
-                    p.to_string(),
-                    cur_priority == p,
-                    cx,
-                    move |this, cx| this.set_priority(p, cx),
-                )
-                .disabled(self.updating),
-            );
-        }
+        let priority_owner = this.clone();
+        let priority_button = Button::new("priority-select")
+            .outline()
+            .compact()
+            .dropdown_caret(true)
+            .disabled(self.updating)
+            .label(priority_label(cur_priority))
+            .dropdown_menu(move |mut menu, _, _| {
+                for p in PRIORITIES {
+                    let owner = priority_owner.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(priority_label(p))
+                            .checked(cur_priority == p)
+                            .on_click(move |_, _, cx| {
+                                let _ = owner.update(cx, |this, cx| this.set_priority(p, cx));
+                            }),
+                    );
+                }
+                menu
+            });
 
-        let mut assignee_row = div().flex().flex_row().flex_wrap().gap_1();
-        for u in self.assignables.clone() {
-            let active = assignee_ids.contains(&u.id);
-            assignee_row = assignee_row.child(
-                Self::chip(
-                    SharedString::from(format!("as-{}", u.id.simple())),
-                    u.username.clone(),
-                    active,
-                    cx,
-                    move |this, cx| this.toggle_assignee(&u, cx),
-                )
-                .disabled(self.updating),
-            );
-        }
+        let assignables = self.assignables.clone();
+        let assignee_owner = this.clone();
+        let assignee_button = Button::new("assignee-select")
+            .outline()
+            .compact()
+            .dropdown_caret(true)
+            .disabled(self.updating || self.assignables.is_empty())
+            .icon(IconName::User)
+            .label(assignee_label)
+            .dropdown_menu(move |mut menu, _, _| {
+                for u in &assignables {
+                    let (user, owner) = (u.clone(), assignee_owner.clone());
+                    menu = menu.item(
+                        PopupMenuItem::new(u.username.clone())
+                            .checked(assignee_ids.contains(&u.id))
+                            .on_click(move |_, _, cx| {
+                                let _ =
+                                    owner.update(cx, |this, cx| this.toggle_assignee(&user, cx));
+                            }),
+                    );
+                }
+                menu
+            });
 
         div()
             .id("task-detail")
@@ -667,7 +714,7 @@ impl Render for TaskDetailView {
                 div()
                     .flex()
                     .flex_col()
-                    .gap_3()
+                    .gap_4()
                     .child(
                         div()
                             .flex()
@@ -676,10 +723,32 @@ impl Render for TaskDetailView {
                             .gap_2()
                             .child(
                                 div()
-                                    .text_xs()
-                                    .text_color(c.muted_foreground)
-                                    .child(format!("#{}", detail.seq_id)),
+                                    .flex_1()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(muted)
+                                    .child(task_key),
                             )
+                            .when(has_done_state, |d| {
+                                d.child(
+                                    Button::new("done-toggle")
+                                        .compact()
+                                        .disabled(self.updating)
+                                        .when(done, |b| b.outline().label("Reopen"))
+                                        .when(!done, |b| b.primary().label("Mark done"))
+                                        .icon(IconName::Check)
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.toggle_done(cx)),
+                                        ),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
                             .child(
                                 div().flex_1().min_w_0().child(
                                     Input::new(&self.title_input)
@@ -699,66 +768,47 @@ impl Render for TaskDetailView {
                     .child(
                         div()
                             .flex()
-                            .flex_row()
-                            .items_center()
+                            .flex_col()
                             .gap_2()
-                            .child(
+                            .child(property(muted, "Status", status_button))
+                            .child(property(muted, "Priority", priority_button))
+                            .child(property(muted, "Assignees", assignee_button))
+                            .child(property(
+                                muted,
+                                "Due",
                                 div()
-                                    .text_xs()
-                                    .text_color(c.muted_foreground)
-                                    .w(px(70.))
-                                    .child("Status"),
-                            )
-                            .child(div().text_sm().child(status_name))
-                            .when(self.statuses.iter().any(|s| s.is_done_state), |d| {
-                                d.child(
-                                    Button::new("done-toggle")
-                                        .disabled(self.updating)
-                                        .ghost()
-                                        .label(if done { "Done" } else { "Mark done" })
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.toggle_done(cx)),
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div().w(px(160.)).child(
+                                            Input::new(&self.due_input)
+                                                .id("task-due")
+                                                .disabled(self.updating),
                                         ),
-                                )
-                            }),
-                    )
-                    .child(section(c.muted_foreground, "Status", status_row))
-                    .child(section(c.muted_foreground, "Priority", prio_row))
-                    .child(section(c.muted_foreground, "Assignees", assignee_row))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .flex_wrap()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(c.muted_foreground)
-                                    .w(px(70.))
-                                    .child("Due"),
-                            )
-                            .child(
-                                div().flex_1().min_w(px(120.)).child(
-                                    Input::new(&self.due_input)
-                                        .id("task-due")
-                                        .disabled(self.updating),
-                                ),
-                            )
-                            .child(
-                                Button::new("apply-due")
-                                    .disabled(self.updating)
-                                    .ghost()
-                                    .label("Apply")
-                                    .on_click(cx.listener(|this, _, _, cx| this.apply_due(cx))),
-                            ),
+                                    )
+                                    .child(
+                                        Button::new("apply-due")
+                                            .disabled(self.updating)
+                                            .ghost()
+                                            .compact()
+                                            .label("Apply")
+                                            .tooltip("Leave empty and apply to clear the due date")
+                                            .on_click(
+                                                cx.listener(|this, _, _, cx| this.apply_due(cx)),
+                                            ),
+                                    ),
+                            )),
                     )
                     .child(
                         div()
                             .flex()
                             .flex_col()
-                            .gap_1()
+                            .gap_2()
+                            .pt_3()
+                            .border_t_1()
+                            .border_color(c.border)
                             .child(
                                 div()
                                     .flex()
@@ -766,8 +816,8 @@ impl Render for TaskDetailView {
                                     .justify_between()
                                     .child(
                                         div()
-                                            .text_xs()
-                                            .text_color(c.muted_foreground)
+                                            .text_sm()
+                                            .font_weight(FontWeight::SEMIBOLD)
                                             .child("Description"),
                                     )
                                     .child(
@@ -832,15 +882,16 @@ impl Render for TaskDetailView {
                             .flex()
                             .flex_col()
                             .gap_2()
-                            .pt_2()
+                            .pt_3()
                             .border_t_1()
                             .border_color(c.border)
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(c.muted_foreground)
-                                    .child("Comments"),
-                            )
+                            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(
+                                if self.comments.is_empty() {
+                                    "Comments".to_string()
+                                } else {
+                                    format!("Comments ({})", self.comments.len())
+                                },
+                            ))
                             .children(self.comments.iter().enumerate().map(|(ix, cm)| {
                                 div()
                                     .flex()
@@ -941,11 +992,21 @@ impl Render for TaskDetailView {
 
 impl EventEmitter<TaskDetailEvent> for TaskDetailView {}
 
-fn section(muted: Hsla, label: &'static str, row: Div) -> Div {
+/// ラベル列を揃えた 1 行分のプロパティ。
+fn property(muted: Hsla, label: &'static str, value: impl IntoElement) -> Div {
     div()
         .flex()
-        .flex_col()
-        .gap_1()
-        .child(div().text_xs().text_color(muted).child(label))
-        .child(row)
+        .flex_row()
+        .items_center()
+        .gap_3()
+        .min_h(px(32.))
+        .child(
+            div()
+                .w(px(80.))
+                .flex_shrink_0()
+                .text_sm()
+                .text_color(muted)
+                .child(label),
+        )
+        .child(div().min_w_0().child(value))
 }

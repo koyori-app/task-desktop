@@ -369,6 +369,8 @@ impl AppShell {
                 s.catalog_loading = false;
                 match projects {
                     Ok(projects) => {
+                        let keys: Vec<_> = projects.iter().map(|p| (p.id, p.key.clone())).collect();
+                        s.task_detail.update(cx, |d, _| d.set_project_keys(keys));
                         s.projects = projects;
                         s.catalog_ready = true;
                     }
@@ -721,6 +723,15 @@ impl AppShell {
         cx.notify();
     }
 
+    /// 表示中のプロジェクト（Tasks / Reviews / Task 詳細のいずれでも）。
+    fn current_project(&self) -> Option<uuid::Uuid> {
+        match &self.route {
+            Route::Project { id, .. } => Some(*id),
+            Route::Reviews { project } | Route::TaskDetail { project, .. } => Some(*project),
+            _ => None,
+        }
+    }
+
     fn nav_item(
         &self,
         route: Route,
@@ -742,19 +753,29 @@ impl AppShell {
             self.nav_item(Route::Upcoming, "Upcoming", IconName::CalendarClock, cx),
         ]);
 
+        // Reviews タブや Task 詳細にいる間もどのプロジェクトか分かるよう、
+        // route の project で active を決める。
+        let current_project = self.current_project();
+        let muted = colors.text_muted;
         let project_items: Vec<SidebarMenuItem> = self
             .projects
             .iter()
             .map(|p| {
-                self.nav_item(
-                    Route::Project {
-                        id: p.id,
-                        label: p.key.clone(),
-                    },
-                    p.key.clone(),
-                    IconName::Folder,
-                    cx,
-                )
+                let route = Route::Project {
+                    id: p.id,
+                    label: p.key.clone(),
+                };
+                let key: SharedString = p.key.clone().into();
+                let show_key = p.name != p.key;
+                SidebarMenuItem::new(p.name.clone())
+                    .icon(IconName::Folder)
+                    .active(current_project == Some(p.id))
+                    .when(show_key, |item| {
+                        item.suffix(move |_, _| {
+                            div().text_xs().text_color(muted).child(key.clone())
+                        })
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| this.navigate(route.clone(), cx)))
             })
             .collect();
 
@@ -819,6 +840,7 @@ impl AppShell {
                 Button::new("toggle-sidebar")
                     .ghost()
                     .icon(IconName::Menu)
+                    .tooltip("Toggle sidebar")
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.sidebar_visible = !this.sidebar_visible;
                         cx.notify();
@@ -833,6 +855,7 @@ impl AppShell {
             .child(
                 Button::new("tenant-switcher")
                     .ghost()
+                    .tooltip("Switch tenant")
                     .label(tenant_name)
                     .icon(IconName::ChevronDown)
                     .dropdown_menu(move |menu, _, _| {
@@ -861,18 +884,20 @@ impl AppShell {
                     .bg(status_color)
                     .id("connection-status"),
             )
-            .when(self.connection == ConnectionStatus::Offline, |d| {
-                d.child(
-                    div()
-                        .text_sm()
-                        .text_color(colors.text_muted)
-                        .child("Reconnecting…"),
-                )
-            })
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(colors.text_muted)
+                    .child(match self.connection {
+                        ConnectionStatus::Online => "Connected",
+                        ConnectionStatus::Offline => "Reconnecting…",
+                    }),
+            )
             .child(
                 Button::new("search")
                     .ghost()
                     .icon(IconName::Search)
+                    .tooltip("Search tasks and projects (Ctrl+P) · Commands (Ctrl+K)")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.toggle_palette(PaletteKind::QuickSearch, window, cx)
                     })),
@@ -881,6 +906,7 @@ impl AppShell {
                 Button::new("notifications")
                     .ghost()
                     .icon(IconName::Bell)
+                    .tooltip("Notifications")
                     .label(if self.unread_count > 0 {
                         self.unread_count.to_string()
                     } else {
@@ -894,6 +920,7 @@ impl AppShell {
                 Button::new("settings")
                     .ghost()
                     .icon(IconName::Settings)
+                    .tooltip("Settings")
                     .on_click(cx.listener(|this, _, _, cx| this.navigate(Route::Settings, cx))),
             )
     }
@@ -1308,7 +1335,7 @@ impl AppShell {
             })
     }
 
-    fn content(&self, _colors: &KoyoriColors, cx: &mut Context<Self>) -> impl IntoElement {
+    fn content(&self, colors: &KoyoriColors, cx: &mut Context<Self>) -> impl IntoElement {
         // feature crate の View が入る場所。
         if self.route == Route::Settings {
             return div()
@@ -1324,43 +1351,50 @@ impl AppShell {
                 .overflow_hidden()
                 .child(self.center.clone());
         }
-        // タスク系ルートは全て §15 の一覧を表示。
-        if matches!(
-            self.route,
-            Route::MyTasks | Route::Today | Route::Upcoming | Route::TaskDetail { .. }
-        ) {
-            return div()
-                .size_full()
-                .min_w_0()
-                .overflow_hidden()
-                .child(self.task_list.clone());
-        }
-        // プロジェクト配下は Tasks/Reviews のタブ切替（§14）。
-        if let Route::Project { id, label } = &self.route {
+        // タスク系ルートは全て §15 の一覧を表示。見出しで今どの一覧かを示す。
+        let personal = match self.route {
+            Route::MyTasks => Some(("My Tasks", "Tasks assigned to you across all projects")),
+            Route::Today => Some(("Today", "Assigned to you, due today or overdue")),
+            Route::Upcoming => Some(("Upcoming", "Assigned to you, due after today")),
+            _ => None,
+        };
+        if let Some((title, subtitle)) = personal {
             return div()
                 .size_full()
                 .min_w_0()
                 .overflow_hidden()
                 .flex()
                 .flex_col()
-                .child(self.project_tabs(*id, label.clone(), true, cx))
+                .child(page_header(colors, title.into(), subtitle.into()))
                 .child(div().flex_1().min_h_0().child(self.task_list.clone()));
         }
-        if let Route::Reviews { project } = &self.route {
-            let key = self
+        // プロジェクト配下は Tasks/Reviews のタブ切替（§14）。
+        if let Some(project) = self.current_project() {
+            let (key, name) = self
                 .projects
                 .iter()
-                .find(|p| p.id == *project)
-                .map(|p| p.key.clone())
-                .unwrap_or_else(|| "Project".into());
+                .find(|p| p.id == project)
+                .map(|p| (p.key.clone(), p.name.clone()))
+                .unwrap_or_else(|| ("Project".into(), "Project".into()));
+            let reviews = matches!(self.route, Route::Reviews { .. });
+            let subtitle = if name == key {
+                "Project".to_string()
+            } else {
+                format!("Project · {key}")
+            };
             return div()
                 .size_full()
                 .min_w_0()
                 .overflow_hidden()
                 .flex()
                 .flex_col()
-                .child(self.project_tabs(*project, key, false, cx))
-                .child(div().flex_1().min_h_0().child(self.review_list.clone()));
+                .child(page_header(colors, name.into(), subtitle.into()))
+                .child(self.project_tabs(project, key, !reviews, cx))
+                .child(div().flex_1().min_h_0().child(if reviews {
+                    self.review_list.clone().into_any_element()
+                } else {
+                    self.task_list.clone().into_any_element()
+                }));
         }
         let title: SharedString = match &self.route {
             Route::Settings => "Settings".into(),
@@ -1587,4 +1621,30 @@ impl Render for AppShell {
             .children(Root::render_dialog_layer(window, cx))
             .children(Root::render_sheet_layer(window, cx))
     }
+}
+
+/// Content 上部の見出し。今どの一覧を見ているかを常に示す。
+fn page_header(colors: &KoyoriColors, title: SharedString, subtitle: SharedString) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .flex_shrink_0()
+        .gap_0p5()
+        .px_4()
+        .pt_3()
+        .pb_2()
+        .child(
+            div()
+                .text_lg()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_ellipsis()
+                .child(title),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(colors.text_muted)
+                .text_ellipsis()
+                .child(subtitle),
+        )
 }

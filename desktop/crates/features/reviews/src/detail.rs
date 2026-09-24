@@ -1,6 +1,6 @@
 //! Review rounds, findings and server-provided actions and gate.
 use api::spec::{Finding, Gate, ReviewSummary};
-use api::types::{FindingState, ReviewResponse};
+use api::types::{FindingSeverity, FindingState, ReviewResponse};
 use api::{Client, FindingsQuery};
 use gpui_kit::component::IndexPath;
 use gpui_kit::component::button::{Button, ButtonVariants};
@@ -57,6 +57,17 @@ impl ListDelegate for FindingRows {
         cx: &mut Context<ListState<Self>>,
     ) -> Option<ListItem> {
         let finding = self.rows.get(ix.row)?;
+        let theme = Theme::global(cx);
+        let muted = theme.semantic_tokens().colors.muted_foreground;
+        let severity_color = match finding.severity {
+            FindingSeverity::High => theme.danger,
+            FindingSeverity::Medium => theme.warning,
+            FindingSeverity::Low | FindingSeverity::Nit => muted,
+        };
+        let resolved = matches!(
+            finding.state,
+            FindingState::Fixed | FindingState::Verified | FindingState::Rejected
+        );
         Some(
             ListItem::new(("finding", ix.row))
                 .h(px(64.))
@@ -68,17 +79,28 @@ impl ListDelegate for FindingRows {
                         .gap_1()
                         .min_w_0()
                         .flex_1()
-                        .child(div().text_sm().text_ellipsis().child(finding.title.clone()))
                         .child(
                             div()
+                                .text_sm()
+                                .text_ellipsis()
+                                .when(resolved, |d| d.text_color(muted))
+                                .child(finding.title.clone()),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_3()
                                 .text_xs()
-                                .text_color(
-                                    Theme::global(cx).semantic_tokens().colors.muted_foreground,
+                                .text_color(muted)
+                                .child(format!("R{}", finding.round))
+                                .child(
+                                    div()
+                                        .text_color(severity_color)
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(capitalize(&finding.severity.to_string())),
                                 )
-                                .child(format!(
-                                    "R{} · {} · {}",
-                                    finding.round, finding.severity, finding.state
-                                )),
+                                .child(capitalize(&finding.state.to_string())),
                         ),
                 ),
         )
@@ -377,6 +399,15 @@ impl ReviewDetailView {
         if let Some(list) = &self.finding_list {
             list.update(cx, |list, cx| list.focus(window, cx));
         }
+    }
+}
+
+/// API の小文字表記（`high` / `open`）を表示用に先頭だけ大文字化する。
+fn capitalize(value: &str) -> String {
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
     }
 }
 

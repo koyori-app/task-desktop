@@ -78,6 +78,44 @@ pub fn due_label(due: &DateTime<Utc>) -> String {
     }
 }
 
+/// 期限の強調度。一覧で overdue / today を色分けする。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DueTone {
+    Overdue,
+    Today,
+    Later,
+}
+
+pub fn due_tone(due: &DateTime<Utc>) -> DueTone {
+    let today = Local::now().date_naive();
+    let d = due.with_timezone(&Local).date_naive();
+    match d.cmp(&today) {
+        std::cmp::Ordering::Less => DueTone::Overdue,
+        std::cmp::Ordering::Equal => DueTone::Today,
+        std::cmp::Ordering::Greater => DueTone::Later,
+    }
+}
+
+/// API の enum 名（`CriticalFire` 等）をそのまま出さない表示名。
+pub fn priority_label(priority: TaskPriority) -> &'static str {
+    match priority {
+        TaskPriority::CriticalFire => "Critical 🔥",
+        TaskPriority::Critical => "Critical",
+        TaskPriority::High => "High",
+        TaskPriority::Medium => "Medium",
+        TaskPriority::Low => "Low",
+        TaskPriority::Trivial => "Trivial",
+    }
+}
+
+/// 一覧で目立たせる優先度。
+pub fn priority_is_urgent(priority: TaskPriority) -> bool {
+    matches!(
+        priority,
+        TaskPriority::CriticalFire | TaskPriority::Critical
+    )
+}
+
 /// A date entered by the user belongs to their local calendar day.
 pub fn due_timestamp(value: &str, timezone: &impl TimeZone) -> Option<DateTime<Utc>> {
     let date = NaiveDate::parse_from_str(value, "%Y-%m-%d").ok()?;
@@ -103,6 +141,24 @@ mod tests {
         assert!((green.h - 1.0 / 3.0).abs() < 0.01);
         let blue = parse_hex_color("#0000ff").unwrap();
         assert!((blue.h - 2.0 / 3.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn due_tone_follows_local_calendar_day() {
+        let now = Utc::now();
+        assert_eq!(due_tone(&now), DueTone::Today);
+        assert_eq!(
+            due_tone(&(now - chrono::Duration::days(2))),
+            DueTone::Overdue
+        );
+        assert_eq!(due_tone(&(now + chrono::Duration::days(2))), DueTone::Later);
+    }
+
+    #[test]
+    fn priority_labels_are_human_readable() {
+        assert_eq!(priority_label(TaskPriority::CriticalFire), "Critical 🔥");
+        assert!(priority_is_urgent(TaskPriority::Critical));
+        assert!(!priority_is_urgent(TaskPriority::High));
     }
 
     #[test]
