@@ -41,6 +41,7 @@
 "detail.unassigned" = { ja = "未割り当て", en = "Unassigned" }
 "detail.reopen" = { ja = "未完了に戻す", en = "Reopen" }
 "detail.mark_done" = { ja = "完了にする", en = "Mark done" }
+"detail.next_status" = { ja = "次へ: {name}", en = "Next: {name}" }
 "detail.save_title" = { ja = "タイトルを保存 (Enter)", en = "Save title (Enter)" }
 "detail.status" = { ja = "ステータス", en = "Status" }
 "detail.priority" = { ja = "優先度", en = "Priority" }

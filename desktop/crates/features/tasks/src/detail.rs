@@ -695,6 +695,25 @@ impl Render for TaskDetailView {
                 menu
             });
 
+        // ワークフロー順で 1 つ先のステータスへ進める（Web の「次へ」と同じ）。最後なら出さない。
+        let next_status = next_status(&self.statuses, cur_status);
+        let status_control = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(status_button)
+            .when_some(next_status, |d, next| {
+                d.child(
+                    Button::new("status-next")
+                        .ghost()
+                        .compact()
+                        .icon(IconName::ChevronRight)
+                        .disabled(self.updating)
+                        .tooltip(t!("tasks.detail.next_status", name = next.name))
+                        .on_click(cx.listener(move |this, _, _, cx| this.set_status(next.id, cx))),
+                )
+            });
+
         let priority_owner = this.clone();
         let priority_button = Button::new("priority-select")
             .outline()
@@ -837,7 +856,7 @@ impl Render for TaskDetailView {
                             .flex()
                             .flex_col()
                             .gap_2()
-                            .child(property(muted, t!("tasks.detail.status"), status_button))
+                            .child(property(muted, t!("tasks.detail.status"), status_control))
                             .child(property(
                                 muted,
                                 t!("tasks.detail.priority"),
@@ -1081,6 +1100,14 @@ impl Render for TaskDetailView {
 impl EventEmitter<TaskDetailEvent> for TaskDetailView {}
 
 /// ラベル列を揃えた 1 行分のプロパティ。
+/// `current` の次のステータス（position 順）。最後か見つからなければ None。
+fn next_status(statuses: &[ProjectStatusResponse], current: Uuid) -> Option<ProjectStatusResponse> {
+    let mut ordered: Vec<&ProjectStatusResponse> = statuses.iter().collect();
+    ordered.sort_by_key(|s| s.position);
+    let ix = ordered.iter().position(|s| s.id == current)?;
+    ordered.get(ix + 1).map(|s| (*s).clone())
+}
+
 fn property(muted: Hsla, label: &'static str, value: impl IntoElement) -> Div {
     div()
         .flex()
@@ -1097,4 +1124,33 @@ fn property(muted: Hsla, label: &'static str, value: impl IntoElement) -> Div {
                 .child(label),
         )
         .child(div().min_w_0().child(value))
+}
+
+#[cfg(test)]
+mod tests {
+    // `super::*` だと gpui の `#[test]` マクロが std のものを隠すので個別に import する。
+    use super::next_status;
+    use api::types::ProjectStatusResponse;
+    use uuid::Uuid;
+
+    fn status(position: i32) -> ProjectStatusResponse {
+        serde_json::from_value(serde_json::json!({
+            "id": Uuid::new_v4(), "project_id": Uuid::nil(), "name": format!("s{position}"),
+            "color": "#000000", "position": position, "is_default": false,
+            "is_done_state": false, "is_default_done": false,
+            "created_at": "2026-01-01T00:00:00Z",
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn next_status_follows_position_order() {
+        // 並びは position 順（配列の順ではない）。
+        let (a, b, c) = (status(0), status(1), status(2));
+        let statuses = vec![c.clone(), a.clone(), b.clone()];
+        assert_eq!(next_status(&statuses, a.id).map(|s| s.id), Some(b.id));
+        assert_eq!(next_status(&statuses, b.id).map(|s| s.id), Some(c.id));
+        assert!(next_status(&statuses, c.id).is_none());
+        assert!(next_status(&statuses, Uuid::nil()).is_none());
+    }
 }
