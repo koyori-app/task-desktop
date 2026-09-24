@@ -37,7 +37,10 @@ const SOURCES: &[(&str, &str)] = &[
     ("settings", include_str!("../locales/settings.toml")),
     ("tasks", include_str!("../locales/tasks.toml")),
     ("reviews", include_str!("../locales/reviews.toml")),
-    ("notifications", include_str!("../locales/notifications.toml")),
+    (
+        "notifications",
+        include_str!("../locales/notifications.toml"),
+    ),
     ("core", include_str!("../locales/core.toml")),
 ];
 
@@ -149,6 +152,12 @@ mod tests {
         );
     }
 
+    #[test]
+    fn scanner_finds_wrapped_keys_and_skips_format() {
+        let source = "t!(\"a.one\") format!(\"x\") t!(\n    \"a.two\",\n    n = 1\n)";
+        assert_eq!(used_keys(source), vec!["a.one", "a.two"]);
+    }
+
     /// ワークスペース内の `t!("…")` が全て両言語に存在すること。
     #[test]
     fn every_used_key_exists() {
@@ -173,22 +182,28 @@ mod tests {
                 }
             }
         }
-        assert!(missing.is_empty(), "missing translations:\n{}", missing.join("\n"));
+        assert!(
+            missing.is_empty(),
+            "missing translations:\n{}",
+            missing.join("\n")
+        );
     }
 
-    /// `t!("key"` の key を集める。`format!("` 等の `…t!(` は除く。
+    /// `t!("key"` の key を集める（改行を挟んでもよい）。`format!(` 等の `…t!(` は除く。
     fn used_keys(text: &str) -> Vec<&str> {
         let mut keys = vec![];
         let mut rest = text;
-        while let Some(pos) = rest.find("t!(\"") {
+        while let Some(pos) = rest.find("t!(") {
             let before = rest[..pos].chars().next_back();
-            let tail = &rest[pos + 4..];
+            // rustfmt がキーを次の行へ折り返すので空白を読み飛ばす。
+            let tail = rest[pos + 3..].trim_start();
             if !before.is_some_and(|c| c.is_alphanumeric() || c == '_')
-                && let Some(end) = tail.find('"')
+                && let Some(literal) = tail.strip_prefix('"')
+                && let Some(end) = literal.find('"')
             {
-                keys.push(&tail[..end]);
+                keys.push(&literal[..end]);
             }
-            rest = tail;
+            rest = &rest[pos + 3..];
         }
         keys
     }

@@ -11,6 +11,7 @@ use base64::Engine;
 use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
+use i18n::t;
 
 /// `state` 用のエントロピー（uuid v4 の 128bit）。
 fn random_token() -> String {
@@ -170,16 +171,22 @@ fn handle_connection_with_timeout(
     }
 
     let (body, result) = if state.as_deref() != Some(expected_state) {
-        ("State mismatch.".to_string(), Err(Error::StateMismatch))
+        (
+            t!("core.auth.state_mismatch").to_string(),
+            Err(Error::StateMismatch),
+        )
     } else if let Some(e) = error {
         (
-            "Authorization failed.".to_string(),
+            t!("core.auth.failed").to_string(),
             Err(Error::AuthRejected(e)),
         )
     } else if let Some(code) = code.filter(|c| !c.is_empty()) {
-        ("Signed in. You can return to Koyori.".to_string(), Ok(code))
+        (t!("core.auth.signed_in").to_string(), Ok(code))
     } else {
-        ("Missing code.".to_string(), Err(Error::MissingCode))
+        (
+            t!("core.auth.missing_code").to_string(),
+            Err(Error::MissingCode),
+        )
     };
 
     let response = format!(

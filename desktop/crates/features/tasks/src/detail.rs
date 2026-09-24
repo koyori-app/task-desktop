@@ -20,6 +20,7 @@ use gpui_kit::component::text::TextView;
 use gpui_kit::component::{Disableable, Icon, Theme, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
+use i18n::t;
 use uuid::Uuid;
 
 const PRIORITIES: [TaskPriority; 6] = [
@@ -72,10 +73,13 @@ impl TaskDetailView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let title_input = cx.new(|cx| InputState::new(window, cx).placeholder("Task title"));
+        let title_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t!("tasks.detail.title_placeholder"))
+        });
         let due_input = cx.new(|cx| InputState::new(window, cx).placeholder("YYYY-MM-DD"));
-        let comment_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Write a comment…"));
+        let comment_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t!("tasks.detail.comment_placeholder"))
+        });
         let subs = vec![
             cx.subscribe(&title_input, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
@@ -110,8 +114,10 @@ impl TaskDetailView {
             title_input,
             due_input,
             comment_input,
-            description_input: cx
-                .new(|cx| TextareaState::new(window, cx).placeholder("Description (Markdown)")),
+            description_input: cx.new(|cx| {
+                TextareaState::new(window, cx)
+                    .placeholder(t!("tasks.detail.description_placeholder"))
+            }),
             editing_description: false,
             posting_comment: false,
             clear_comment_input: false,
@@ -165,7 +171,7 @@ impl TaskDetailView {
                 match detail {
                     Ok(detail) => this.detail = Some(detail),
                     Err(api::ApiError::NotFound) => {
-                        this.error = Some("This task no longer exists.".into())
+                        this.error = Some(t!("tasks.detail.not_found").into())
                     }
                     Err(e) => this.error = Some(e.to_string()),
                 }
@@ -173,7 +179,7 @@ impl TaskDetailView {
                     Ok(s) => this.statuses = s,
                     Err(e) => {
                         if this.detail.is_some() {
-                            this.error = Some(format!("Could not load statuses: {e}"));
+                            this.error = Some(t!("tasks.detail.statuses_error", error = e));
                         }
                     }
                 }
@@ -181,7 +187,7 @@ impl TaskDetailView {
                     Ok(users) => this.assignables = users,
                     Err(e) => {
                         if this.detail.is_some() {
-                            this.error = Some(format!("Could not load assignees: {e}"));
+                            this.error = Some(t!("tasks.detail.assignees_error", error = e));
                         }
                     }
                 }
@@ -189,7 +195,7 @@ impl TaskDetailView {
                     Ok(comments) => this.comments = comments.comments,
                     Err(e) => {
                         if this.detail.is_some() {
-                            this.error = Some(format!("Could not load comments: {e}"));
+                            this.error = Some(t!("tasks.detail.comments_error", error = e));
                         }
                     }
                 }
@@ -417,7 +423,7 @@ impl TaskDetailView {
             }
         } else {
             let Some(dt) = due_timestamp(&text, &Local) else {
-                self.error = Some("Due date must be YYYY-MM-DD".into());
+                self.error = Some(t!("tasks.detail.due_invalid").into());
                 cx.notify();
                 return;
             };
@@ -571,11 +577,11 @@ impl Render for TaskDetailView {
                     d.child(Icon::new(IconName::ClipboardList).size_8())
                 })
                 .child(div().text_sm().child(if self.loading {
-                    "Loading…".to_string()
+                    t!("tasks.detail.loading").to_string()
                 } else {
                     self.error
                         .clone()
-                        .unwrap_or_else(|| "Select a task to view its details".into())
+                        .unwrap_or_else(|| t!("tasks.detail.select_task").into())
                 }));
         };
 
@@ -618,7 +624,7 @@ impl Render for TaskDetailView {
         let cur_priority = detail.priority;
         let assignee_ids: Vec<Uuid> = detail.assignees.iter().map(|a| a.user.id).collect();
         let assignee_label = if detail.assignees.is_empty() {
-            "Unassigned".to_string()
+            t!("tasks.detail.unassigned").to_string()
         } else {
             detail
                 .assignees
@@ -734,8 +740,12 @@ impl Render for TaskDetailView {
                                     Button::new("done-toggle")
                                         .compact()
                                         .disabled(self.updating)
-                                        .when(done, |b| b.outline().label("Reopen"))
-                                        .when(!done, |b| b.primary().label("Mark done"))
+                                        .when(done, |b| {
+                                            b.outline().label(t!("tasks.detail.reopen"))
+                                        })
+                                        .when(!done, |b| {
+                                            b.primary().label(t!("tasks.detail.mark_done"))
+                                        })
                                         .icon(IconName::Check)
                                         .on_click(
                                             cx.listener(|this, _, _, cx| this.toggle_done(cx)),
@@ -761,7 +771,7 @@ impl Render for TaskDetailView {
                                     .disabled(self.updating)
                                     .ghost()
                                     .icon(IconName::Check)
-                                    .tooltip("Save title (Enter)")
+                                    .tooltip(t!("tasks.detail.save_title"))
                                     .on_click(cx.listener(|this, _, _, cx| this.save_title(cx))),
                             ),
                     )
@@ -770,12 +780,20 @@ impl Render for TaskDetailView {
                             .flex()
                             .flex_col()
                             .gap_2()
-                            .child(property(muted, "Status", status_button))
-                            .child(property(muted, "Priority", priority_button))
-                            .child(property(muted, "Assignees", assignee_button))
+                            .child(property(muted, t!("tasks.detail.status"), status_button))
                             .child(property(
                                 muted,
-                                "Due",
+                                t!("tasks.detail.priority"),
+                                priority_button,
+                            ))
+                            .child(property(
+                                muted,
+                                t!("tasks.detail.assignees"),
+                                assignee_button,
+                            ))
+                            .child(property(
+                                muted,
+                                t!("tasks.detail.due"),
                                 div()
                                     .flex()
                                     .flex_row()
@@ -793,8 +811,8 @@ impl Render for TaskDetailView {
                                             .disabled(self.updating)
                                             .ghost()
                                             .compact()
-                                            .label("Apply")
-                                            .tooltip("Leave empty and apply to clear the due date")
+                                            .label(t!("tasks.detail.apply"))
+                                            .tooltip(t!("tasks.detail.clear_due_tooltip"))
                                             .on_click(
                                                 cx.listener(|this, _, _, cx| this.apply_due(cx)),
                                             ),
@@ -818,16 +836,16 @@ impl Render for TaskDetailView {
                                         div()
                                             .text_sm()
                                             .font_weight(FontWeight::SEMIBOLD)
-                                            .child("Description"),
+                                            .child(t!("tasks.detail.description")),
                                     )
                                     .child(
                                         Button::new("edit-description")
                                             .compact()
                                             .ghost()
                                             .label(if self.editing_description {
-                                                "Cancel"
+                                                t!("tasks.detail.cancel")
                                             } else {
-                                                "Edit"
+                                                t!("tasks.detail.edit")
                                             })
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 if this.editing_description {
@@ -854,7 +872,7 @@ impl Render for TaskDetailView {
                                     .child(
                                         Button::new("save-description")
                                             .disabled(self.updating)
-                                            .label("Save description")
+                                            .label(t!("tasks.detail.save_description"))
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.save_description(cx)
                                             })),
@@ -868,7 +886,9 @@ impl Render for TaskDetailView {
                                             .description
                                             .clone()
                                             .filter(|s| !s.is_empty())
-                                            .unwrap_or_else(|| "No description".into()),
+                                            .unwrap_or_else(|| {
+                                                t!("tasks.detail.no_description").into()
+                                            }),
                                     )
                                     .w_full(),
                                 )
@@ -887,9 +907,9 @@ impl Render for TaskDetailView {
                             .border_color(c.border)
                             .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(
                                 if self.comments.is_empty() {
-                                    "Comments".to_string()
+                                    t!("tasks.detail.comments").to_string()
                                 } else {
-                                    format!("Comments ({})", self.comments.len())
+                                    t!("tasks.detail.comments_count", count = self.comments.len())
                                 },
                             ))
                             .children(self.comments.iter().enumerate().map(|(ix, cm)| {
@@ -951,7 +971,7 @@ impl Render for TaskDetailView {
                                                         reply.id
                                                     )),
                                                     reply.body.clone().unwrap_or_else(|| {
-                                                        "Deleted comment".into()
+                                                        t!("tasks.detail.deleted_comment").into()
                                                     }),
                                                 )
                                                 .w_full(),
@@ -975,9 +995,9 @@ impl Render for TaskDetailView {
                                         Button::new("post-comment")
                                             .ghost()
                                             .label(if self.posting_comment {
-                                                "Posting…"
+                                                t!("tasks.detail.posting")
                                             } else {
-                                                "Post"
+                                                t!("tasks.detail.post")
                                             })
                                             .disabled(self.posting_comment)
                                             .on_click(

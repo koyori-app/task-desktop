@@ -7,6 +7,7 @@ use gpui_kit::component::command::{Command, CommandItem, CommandState};
 use gpui_kit::component::label::Label;
 use gpui_kit::component::{IndexPath, WindowExt};
 use gpui_kit::*;
+use i18n::t;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaletteKind {
@@ -118,15 +119,15 @@ impl Render for PaletteView {
                 .update(cx, |state, cx| state.set_loading(self.loading, window, cx));
         }
         let placeholder = match self.kind {
-            PaletteKind::Commands => "Type a command…",
-            PaletteKind::QuickSearch => "Jump to a task or project…",
+            PaletteKind::Commands => t!("app.palette.placeholder_commands"),
+            PaletteKind::QuickSearch => t!("app.palette.placeholder_search"),
         };
         let footer = if self.loading {
-            SharedString::from("Searching projects and tasks…")
+            SharedString::from(t!("app.palette.searching"))
         } else {
             self.footer
                 .clone()
-                .unwrap_or_else(|| "↑ ↓ to navigate · Enter to open · Esc to close".into())
+                .unwrap_or_else(|| t!("app.palette.hint").into())
         };
         let on_query = self.on_query.clone();
         let on_confirm = self.on_confirm.clone();

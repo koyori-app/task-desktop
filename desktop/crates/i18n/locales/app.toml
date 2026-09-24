@@ -1,3 +1,59 @@
 # app の表示文字列。キーは "app.<key>"（t!("app.<key>")）。
 # 1 行 1 キーで ja / en を並べる。引数は {name} で埋め込む。
 
+"nav.my_tasks" = { ja = "マイタスク", en = "My Tasks" }
+"nav.today" = { ja = "今日", en = "Today" }
+"nav.upcoming" = { ja = "今後", en = "Upcoming" }
+"nav.projects" = { ja = "プロジェクト", en = "Projects" }
+"nav.notifications" = { ja = "通知", en = "Notifications" }
+"nav.settings" = { ja = "設定", en = "Settings" }
+"page.my_tasks_desc" = { ja = "すべてのプロジェクトで自分が担当しているタスク", en = "Tasks assigned to you across all projects" }
+"page.today_desc" = { ja = "自分が担当で、期限が今日または期限切れのタスク", en = "Assigned to you, due today or overdue" }
+"page.upcoming_desc" = { ja = "自分が担当で、期限が明日以降のタスク", en = "Assigned to you, due after today" }
+"page.project" = { ja = "プロジェクト", en = "Project" }
+"page.project_key" = { ja = "プロジェクト · {key}", en = "Project · {key}" }
+"tab.tasks" = { ja = "タスク", en = "Tasks" }
+"tab.reviews" = { ja = "レビュー", en = "Reviews" }
+"select_item" = { ja = "項目を選ぶと詳細が表示されます", en = "Select an item" }
+
+"header.tenant" = { ja = "テナント", en = "Tenant" }
+"header.toggle_sidebar" = { ja = "サイドバーの表示切り替え", en = "Toggle sidebar" }
+"header.switch_tenant" = { ja = "テナントを切り替え", en = "Switch tenant" }
+"header.connected" = { ja = "接続中", en = "Connected" }
+"header.reconnecting" = { ja = "再接続中…", en = "Reconnecting…" }
+"header.search" = { ja = "タスク・プロジェクトを検索 ({search}) · コマンド ({palette})", en = "Search tasks and projects ({search}) · Commands ({palette})" }
+"header.notifications" = { ja = "通知", en = "Notifications" }
+"header.settings" = { ja = "設定 ({key})", en = "Settings ({key})" }
+
+"login.subtitle" = { ja = "Koyori アカウントでサインイン", en = "Sign in with your Koyori account" }
+"login.sign_in" = { ja = "Koyori でサインイン", en = "Sign in with Koyori" }
+"login.waiting" = { ja = "ブラウザでの承認を待っています…", en = "Waiting for browser…" }
+"login.start_failed" = { ja = "認証を開始できませんでした", en = "Failed to start authorization" }
+"login.browser_failed" = { ja = "ブラウザを開けませんでした", en = "Failed to open browser" }
+"login.failed" = { ja = "サインインに失敗したか、時間切れになりました", en = "Sign-in failed or timed out" }
+"login.expired" = { ja = "セッションの有効期限が切れました。もう一度サインインしてください。", en = "Your session expired. Please sign in again." }
+
+"palette.open_current_review" = { ja = "表示中のレビューを開く", en = "Open Current Review" }
+"palette.create_task" = { ja = "タスクを作成", en = "Create Task" }
+"palette.search_tasks" = { ja = "タスクを検索", en = "Search Tasks" }
+"palette.toggle_sidebar" = { ja = "サイドバーの表示切り替え", en = "Toggle Sidebar" }
+"palette.start_review" = { ja = "レビューを開始", en = "Start Review" }
+"palette.finding_fixed" = { ja = "指摘を修正済みにする", en = "Mark Finding as Fixed" }
+"palette.finding_verified" = { ja = "指摘を確認済みにする", en = "Verify Finding" }
+"palette.finding_open" = { ja = "指摘を再オープン", en = "Reopen Finding" }
+"palette.finding_deferred" = { ja = "指摘を保留にする", en = "Defer Finding" }
+"palette.finding_rejected" = { ja = "指摘を却下する", en = "Reject Finding" }
+"palette.go_my_tasks" = { ja = "マイタスクへ移動", en = "Go to My Tasks" }
+"palette.go_today" = { ja = "今日へ移動", en = "Go to Today" }
+"palette.go_upcoming" = { ja = "今後へ移動", en = "Go to Upcoming" }
+"palette.go_notifications" = { ja = "通知へ移動", en = "Go to Notifications" }
+"palette.go_settings" = { ja = "設定を開く", en = "Go to Settings" }
+"palette.project_tasks" = { ja = "{key}: タスク", en = "{key}: Tasks" }
+"palette.project_reviews" = { ja = "{key}: レビュー", en = "{key}: Reviews" }
+"palette.mark_all_read" = { ja = "すべての通知を既読にする", en = "Mark all notifications read" }
+"palette.switch_tenant" = { ja = "{name} に切り替え", en = "Switch to {name}" }
+"palette.refresh_tasks" = { ja = "タスクを再読み込み", en = "Refresh tasks" }
+"palette.placeholder_commands" = { ja = "コマンドを入力…", en = "Type a command…" }
+"palette.placeholder_search" = { ja = "タスクやプロジェクトへ移動…", en = "Jump to a task or project…" }
+"palette.searching" = { ja = "プロジェクトとタスクを検索中…", en = "Searching projects and tasks…" }
+"palette.hint" = { ja = "↑ ↓ で移動 · Enter で開く · Esc で閉じる", en = "↑ ↓ to navigate · Enter to open · Esc to close" }

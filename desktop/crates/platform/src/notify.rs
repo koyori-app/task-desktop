@@ -66,7 +66,7 @@ impl Notifier {
             .appname(&self.app_id)
             .summary(&n.title)
             .body(&n.body)
-            .action("default", "Open Koyori")
+            .action("default", i18n::t!("core.tray.open"))
             .show()
             .map_err(|e| crate::error::Error::Notification(e.to_string()))?;
         if let Some(callback) = activated {

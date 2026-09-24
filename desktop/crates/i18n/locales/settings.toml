@@ -1,3 +1,71 @@
 # settings の表示文字列。キーは "settings.<key>"（t!("settings.<key>")）。
 # 1 行 1 キーで ja / en を並べる。引数は {name} で埋め込む。
 
+"title" = { ja = "設定", en = "Settings" }
+"back" = { ja = "戻る", en = "Back" }
+"back_tooltip" = { ja = "戻る (Esc)", en = "Back (Esc)" }
+"section.general" = { ja = "一般", en = "General" }
+"section.notifications" = { ja = "通知", en = "Notifications" }
+"section.appearance" = { ja = "外観", en = "Appearance" }
+"section.keyboard" = { ja = "キーボード", en = "Keyboard" }
+"section.account" = { ja = "アカウント", en = "Account" }
+
+"general.language" = { ja = "言語", en = "Language" }
+"general.language_desc" = { ja = "画面の表示言語。入力欄の案内文・トレイ・OS 通知は再起動後に切り替わります。", en = "Display language. Input hints, the tray and OS notifications switch after a restart." }
+"general.launch" = { ja = "ログイン時に起動", en = "Launch at login" }
+"general.launch_desc" = { ja = "コンピューターにサインインしたときに Koyori を自動で起動します。", en = "Start Koyori automatically when you sign in to your computer." }
+"general.background" = { ja = "バックグラウンドで実行し続ける", en = "Keep running in background" }
+"general.background_desc" = { ja = "ウィンドウを閉じてもシステムトレイに常駐し、通知を受け取り続けます。", en = "Closing the window keeps Koyori in the system tray so notifications still arrive." }
+"general.background_unavailable" = { ja = "この環境にはシステムトレイが無いため使えません。ウィンドウを閉じると Koyori は終了します。", en = "Unavailable: this desktop has no system tray, so closing the window quits Koyori." }
+"general.launch_error" = { ja = "ログイン時の起動設定を変更できませんでした: {error}", en = "Could not update login startup: {error}" }
+"save_error" = { ja = "設定を保存できませんでした: {error}", en = "Could not save settings: {error}" }
+
+"notifications.desktop" = { ja = "デスクトップ通知", en = "Desktop notifications" }
+"notifications.desktop_desc" = { ja = "新しい動きを OS の通知で知らせます。通知センターには常にすべて届きます。", en = "Show OS notifications for new activity. The Notification Center always receives everything." }
+"notifications.notify_about" = { ja = "通知する内容", en = "Notify me about" }
+"notifications.tasks" = { ja = "タスク", en = "Tasks" }
+"notifications.tasks_desc" = { ja = "割り当て、メンション、ステータス変更、コメント。", en = "Assignments, mentions, status changes and comments." }
+"notifications.reviews" = { ja = "レビュー", en = "Reviews" }
+"notifications.reviews_desc" = { ja = "新しいレビューラウンドと指摘の状態変更。", en = "New review rounds and finding state changes." }
+"notifications.due" = { ja = "期限", en = "Due dates" }
+"notifications.due_desc" = { ja = "期限が近づいたタスク。", en = "Tasks that are about to reach their due date." }
+"notifications.per_project" = { ja = "プロジェクトごとの設定", en = "Per-project settings" }
+"notifications.per_project_desc" = { ja = "プロジェクトごとに記録するイベントは Web で管理します。", en = "Which events are recorded for each project is managed on the web." }
+"notifications.open_web" = { ja = "Web で開く", en = "Open on web" }
+"notifications.open_web_unavailable" = { ja = "プロジェクトの通知設定はまだ Web で提供されていません", en = "Project notification settings are not available on the website yet" }
+
+"appearance.theme" = { ja = "テーマ", en = "Theme" }
+"appearance.theme_desc" = { ja = "「システム」は OS のライト / ダーク設定に合わせます。", en = "System follows your operating system's light or dark mode." }
+"appearance.light" = { ja = "ライト", en = "Light" }
+"appearance.dark" = { ja = "ダーク", en = "Dark" }
+"appearance.system" = { ja = "システム", en = "System" }
+
+"keyboard.palette" = { ja = "コマンドパレット", en = "Command palette" }
+"keyboard.palette_desc" = { ja = "どこからでもコマンドを実行します。", en = "Run any command from anywhere." }
+"keyboard.search" = { ja = "クイック検索", en = "Quick search" }
+"keyboard.search_desc" = { ja = "プロジェクトやタスクへ移動します。", en = "Jump to a project or task." }
+"keyboard.save" = { ja = "ショートカットを保存", en = "Save shortcuts" }
+"keyboard.hint" = { ja = "ctrl-k や cmd-shift-p の形式で入力します。再起動後に反映されます。", en = "Use the form ctrl-k or cmd-shift-p. Takes effect after restart." }
+"keyboard.empty" = { ja = "ショートカットを空にはできません", en = "Keybinding must not be empty" }
+"keyboard.invalid" = { ja = "ctrl-k と ctrl-p のように、異なる有効なショートカットを 2 つ指定してください", en = "Use two different valid shortcuts, such as ctrl-k and ctrl-p" }
+"keyboard.saved" = { ja = "保存しました。再起動後に反映されます。", en = "Saved. Takes effect after restart." }
+
+"account.status" = { ja = "メール {email} · 2 段階認証 {totp}", en = "Email {email} · Two-factor authentication {totp}" }
+"account.verified" = { ja = "確認済み", en = "verified" }
+"account.not_verified" = { ja = "未確認", en = "not verified" }
+"account.on" = { ja = "オン", en = "on" }
+"account.off" = { ja = "オフ", en = "off" }
+"account.loading" = { ja = "アカウント情報を読み込み中…", en = "Loading account information…" }
+"account.signed_in" = { ja = "Koyori にサインイン済み", en = "Signed in to Koyori" }
+"account.not_signed_in" = { ja = "サインインしていません", en = "Not signed in" }
+"account.load_error" = { ja = "アカウント情報を読み込めませんでした", en = "Could not load account" }
+"account.retry" = { ja = "再試行", en = "Retry" }
+"account.devices" = { ja = "デバイス", en = "Devices" }
+"account.this_device" = { ja = "{name}（このデバイス）", en = "{name} (this device)" }
+"account.device_meta" = { ja = "最終使用 {last} · 有効期限 {expires}", en = "Last used {last} · Expires {expires}" }
+"account.revoke" = { ja = "取り消す", en = "Revoke" }
+"account.device_removed" = { ja = "デバイスを削除しました", en = "Device removed" }
+"account.loading_devices" = { ja = "デバイスを読み込み中…", en = "Loading devices…" }
+"account.no_devices" = { ja = "デバイスはありません", en = "No devices" }
+"account.logout" = { ja = "ログアウト", en = "Log out" }
+"account.logout_desc" = { ja = "このコンピューターの Koyori からサインアウトし、デバイストークンを取り消します。", en = "Sign out of Koyori on this computer and revoke its device token." }

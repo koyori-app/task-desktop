@@ -1,3 +1,61 @@
 # tasks の表示文字列。キーは "tasks.<key>"（t!("tasks.<key>")）。
 # 1 行 1 キーで ja / en を並べる。引数は {name} で埋め込む。
 
+
+"list.empty_default" = { ja = "タスクはありません", en = "No tasks" }
+"list.empty_my" = { ja = "担当のタスクはありません", en = "No tasks assigned to you" }
+"list.empty_today" = { ja = "今日が期限のタスクはありません", en = "Nothing due today" }
+"list.empty_upcoming" = { ja = "明日以降が期限のタスクはありません", en = "Nothing due after today" }
+"list.empty_project" = { ja = "このプロジェクトにはまだタスクがありません", en = "No tasks in this project yet" }
+"list.empty_signed_out" = { ja = "サインインするとタスクが表示されます", en = "Sign in to see tasks" }
+"list.mark_done" = { ja = "完了にする", en = "Mark done" }
+"list.reopen" = { ja = "未完了に戻す", en = "Reopen task" }
+"list.new_task_placeholder" = { ja = "新しいタスクのタイトル…", en = "New task title…" }
+"list.add_to_project" = { ja = "{key} にタスクを追加…", en = "Add a task to {key}…" }
+"list.add_to_personal" = { ja = "個人プロジェクトにタスクを追加…", en = "Add a task to your personal project…" }
+"list.personal_project_error" = { ja = "個人プロジェクトを読み込めませんでした。もう一度お試しください。", en = "Could not load the personal project. Try again." }
+"list.status_error" = { ja = "タスクのステータスを読み込めませんでした。もう一度お試しください。", en = "Could not load a task status. Try again." }
+"list.add" = { ja = "追加", en = "Add" }
+"list.creating" = { ja = "作成中…", en = "Creating…" }
+
+"detail.title_placeholder" = { ja = "タスクのタイトル", en = "Task title" }
+"detail.comment_placeholder" = { ja = "コメントを書く…", en = "Write a comment…" }
+"detail.description_placeholder" = { ja = "説明（Markdown）", en = "Description (Markdown)" }
+"detail.not_found" = { ja = "このタスクはもう存在しません。", en = "This task no longer exists." }
+"detail.statuses_error" = { ja = "ステータスを読み込めませんでした: {error}", en = "Could not load statuses: {error}" }
+"detail.assignees_error" = { ja = "担当者を読み込めませんでした: {error}", en = "Could not load assignees: {error}" }
+"detail.comments_error" = { ja = "コメントを読み込めませんでした: {error}", en = "Could not load comments: {error}" }
+"detail.due_invalid" = { ja = "期限は YYYY-MM-DD で入力してください", en = "Due date must be YYYY-MM-DD" }
+"detail.loading" = { ja = "読み込み中…", en = "Loading…" }
+"detail.select_task" = { ja = "タスクを選ぶと詳細が表示されます", en = "Select a task to view its details" }
+"detail.unassigned" = { ja = "未割り当て", en = "Unassigned" }
+"detail.reopen" = { ja = "未完了に戻す", en = "Reopen" }
+"detail.mark_done" = { ja = "完了にする", en = "Mark done" }
+"detail.save_title" = { ja = "タイトルを保存 (Enter)", en = "Save title (Enter)" }
+"detail.status" = { ja = "ステータス", en = "Status" }
+"detail.priority" = { ja = "優先度", en = "Priority" }
+"detail.assignees" = { ja = "担当者", en = "Assignees" }
+"detail.due" = { ja = "期限", en = "Due" }
+"detail.apply" = { ja = "適用", en = "Apply" }
+"detail.clear_due_tooltip" = { ja = "空欄のまま適用すると期限を解除します", en = "Leave empty and apply to clear the due date" }
+"detail.description" = { ja = "説明", en = "Description" }
+"detail.edit" = { ja = "編集", en = "Edit" }
+"detail.cancel" = { ja = "キャンセル", en = "Cancel" }
+"detail.save_description" = { ja = "説明を保存", en = "Save description" }
+"detail.no_description" = { ja = "説明はありません", en = "No description" }
+"detail.comments" = { ja = "コメント", en = "Comments" }
+"detail.comments_count" = { ja = "コメント ({count})", en = "Comments ({count})" }
+"detail.deleted_comment" = { ja = "削除されたコメント", en = "Deleted comment" }
+"detail.post" = { ja = "投稿", en = "Post" }
+"detail.posting" = { ja = "投稿中…", en = "Posting…" }
+
+"priority.critical_fire" = { ja = "重大 🔥", en = "Critical 🔥" }
+"priority.critical" = { ja = "重大", en = "Critical" }
+"priority.high" = { ja = "高", en = "High" }
+"priority.medium" = { ja = "中", en = "Medium" }
+"priority.low" = { ja = "低", en = "Low" }
+"priority.trivial" = { ja = "最低", en = "Trivial" }
+
+"due.today" = { ja = "今日", en = "today" }
+"due.tomorrow" = { ja = "明日", en = "tomorrow" }
+"due.overdue" = { ja = "{days}日超過", en = "{days}d overdue" }

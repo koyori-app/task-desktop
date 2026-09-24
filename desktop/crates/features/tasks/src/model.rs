@@ -2,6 +2,7 @@
 
 use api::types::{MyTaskItem, TaskPriority, TaskResponse};
 use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
+use i18n::t;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -71,9 +72,9 @@ pub fn due_label(due: &DateTime<Utc>) -> String {
     let today = Local::now().date_naive();
     let d = due.with_timezone(&Local).date_naive();
     match (d - today).num_days() {
-        0 => "today".into(),
-        1 => "tomorrow".into(),
-        n if n < 0 => format!("{}d overdue", -n),
+        0 => t!("tasks.due.today").into(),
+        1 => t!("tasks.due.tomorrow").into(),
+        n if n < 0 => t!("tasks.due.overdue", days = -n),
         _ => d.format("%Y-%m-%d").to_string(),
     }
 }
@@ -99,12 +100,12 @@ pub fn due_tone(due: &DateTime<Utc>) -> DueTone {
 /// API の enum 名（`CriticalFire` 等）をそのまま出さない表示名。
 pub fn priority_label(priority: TaskPriority) -> &'static str {
     match priority {
-        TaskPriority::CriticalFire => "Critical 🔥",
-        TaskPriority::Critical => "Critical",
-        TaskPriority::High => "High",
-        TaskPriority::Medium => "Medium",
-        TaskPriority::Low => "Low",
-        TaskPriority::Trivial => "Trivial",
+        TaskPriority::CriticalFire => t!("tasks.priority.critical_fire"),
+        TaskPriority::Critical => t!("tasks.priority.critical"),
+        TaskPriority::High => t!("tasks.priority.high"),
+        TaskPriority::Medium => t!("tasks.priority.medium"),
+        TaskPriority::Low => t!("tasks.priority.low"),
+        TaskPriority::Trivial => t!("tasks.priority.trivial"),
     }
 }
 
@@ -156,7 +157,14 @@ mod tests {
 
     #[test]
     fn priority_labels_are_human_readable() {
-        assert_eq!(priority_label(TaskPriority::CriticalFire), "Critical 🔥");
+        assert_eq!(
+            priority_label(TaskPriority::CriticalFire),
+            t!("tasks.priority.critical_fire")
+        );
+        assert_ne!(
+            priority_label(TaskPriority::CriticalFire),
+            "tasks.priority.critical_fire"
+        );
         assert!(priority_is_urgent(TaskPriority::Critical));
         assert!(!priority_is_urgent(TaskPriority::High));
     }

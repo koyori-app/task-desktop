@@ -1,5 +1,7 @@
 use tray_icon::menu::MenuEvent;
 
+use i18n::t;
+
 use crate::error::Result;
 
 /// Tray メニューのユーザー操作（desktop.md §9）。
@@ -34,9 +36,9 @@ impl AppTray {
         }
         use muda::{Menu, MenuItem};
 
-        let open = MenuItem::new("Open Koyori", true, None);
-        let notifications = MenuItem::new("Notifications", true, None);
-        let quit = MenuItem::new("Quit Koyori", true, None);
+        let open = MenuItem::new(t!("core.tray.open"), true, None);
+        let notifications = MenuItem::new(t!("core.tray.notifications"), true, None);
+        let quit = MenuItem::new(t!("core.tray.quit"), true, None);
 
         let menu = Menu::new();
         menu.append(&open)?;
@@ -108,7 +110,7 @@ impl AppTray {
 
     /// Put a visible unread indicator on the tray icon, not only its tooltip.
     pub fn set_unread_count(&self, count: i64) -> Result<()> {
-        self.set_tooltip(&format!("Koyori · {count} unread"))?;
+        self.set_tooltip(&t!("core.tray.unread_tooltip", count = count))?;
         let unread = count > 0;
         if self.unread.get() != unread {
             let icon = if unread {

@@ -15,6 +15,7 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable, Theme, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
+use i18n::t;
 use uuid::Uuid;
 
 use crate::model::{
@@ -78,7 +79,7 @@ impl ListDelegate for TaskRows {
             .child(div().text_sm().child(if self.signed_in {
                 self.empty_text
             } else {
-                "Sign in to see tasks"
+                t!("tasks.list.empty_signed_out")
             }))
     }
     fn render_item(
@@ -118,9 +119,9 @@ impl ListDelegate for TaskRows {
                                             .disabled(self.pending.contains(&id))
                                             .label(if row.is_done { "✓" } else { "○" })
                                             .tooltip(if row.is_done {
-                                                "Reopen task"
+                                                t!("tasks.list.reopen")
                                             } else {
-                                                "Mark done"
+                                                t!("tasks.list.mark_done")
                                             })
                                             .on_click(move |_, _, cx| {
                                                 let _ = owner.update(cx, |view, cx| {
@@ -241,7 +242,9 @@ impl TaskListView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let create_input = cx.new(|cx| InputState::new(window, cx).placeholder("New task title…"));
+        let create_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t!("tasks.list.new_task_placeholder"))
+        });
         let sub = cx.subscribe(&create_input, |this, _, ev: &InputEvent, cx| {
             if matches!(ev, InputEvent::PressEnter { .. }) {
                 this.create_task(cx);
@@ -258,7 +261,7 @@ impl TaskListView {
                     loading: false,
                     signed_in: false,
                     more: false,
-                    empty_text: "No tasks",
+                    empty_text: t!("tasks.list.empty_default"),
                 },
                 window,
                 cx,
@@ -659,7 +662,7 @@ impl TaskListView {
                         return;
                     }
                     this.creating = false;
-                    this.error = Some("Could not load the personal project. Try again.".into());
+                    this.error = Some(t!("tasks.list.personal_project_error").into());
                     cx.notify();
                 });
                 return;
@@ -680,7 +683,7 @@ impl TaskListView {
                         return;
                     }
                     this.creating = false;
-                    this.error = Some("Could not load a task status. Try again.".into());
+                    this.error = Some(t!("tasks.list.status_error").into());
                     cx.notify();
                 });
                 return;
@@ -747,8 +750,8 @@ impl Render for TaskListView {
             self.placeholder_dirty = false;
             // 作成先が見えないと My Tasks で作ったタスクの行き先が分からない。
             let placeholder = match &self.mode {
-                ListMode::Project { key, .. } => format!("Add a task to {key}…"),
-                _ => "Add a task to your personal project…".into(),
+                ListMode::Project { key, .. } => t!("tasks.list.add_to_project", key = key),
+                _ => t!("tasks.list.add_to_personal").into(),
             };
             self.create_input
                 .update(cx, |s, cx| s.set_placeholder(placeholder, window, cx));
@@ -758,10 +761,10 @@ impl Render for TaskListView {
             (t.semantic_tokens().colors, t.danger)
         };
         let empty_text = match self.mode {
-            ListMode::MyTasks => "No tasks assigned to you",
-            ListMode::Today => "Nothing due today",
-            ListMode::Upcoming => "Nothing due after today",
-            ListMode::Project { .. } => "No tasks in this project yet",
+            ListMode::MyTasks => t!("tasks.list.empty_my"),
+            ListMode::Today => t!("tasks.list.empty_today"),
+            ListMode::Upcoming => t!("tasks.list.empty_upcoming"),
+            ListMode::Project { .. } => t!("tasks.list.empty_project"),
         };
 
         self.list_state.update(cx, |state, cx| {
@@ -815,7 +818,11 @@ impl Render for TaskListView {
                     .child(
                         Button::new("create-task")
                             .compact()
-                            .label(if self.creating { "Creating…" } else { "Add" })
+                            .label(if self.creating {
+                                t!("tasks.list.creating")
+                            } else {
+                                t!("tasks.list.add")
+                            })
                             .disabled(self.creating)
                             .on_click(cx.listener(|this, _, _, cx| this.create_task(cx))),
                     ),

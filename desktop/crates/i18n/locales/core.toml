@@ -1,3 +1,25 @@
 # core の表示文字列。キーは "core.<key>"（t!("core.<key>")）。
 # 1 行 1 キーで ja / en を並べる。引数は {name} で埋め込む。
 
+"notify.assigned" = { ja = "タスクが割り当てられました", en = "Task assigned" }
+"notify.mentioned" = { ja = "タスクでメンションされました", en = "Mentioned in task" }
+"notify.status_changed" = { ja = "タスクのステータスが変更されました", en = "Task status changed" }
+"notify.comment_added" = { ja = "新しいコメント", en = "New comment" }
+"notify.deadline_soon" = { ja = "期限が近づいています", en = "Due date approaching" }
+"notify.round_created" = { ja = "レビューラウンドが作成されました", en = "Review round created" }
+"notify.round_created_findings" = { ja = "レビューラウンドが作成されました（指摘 {count} 件）", en = "Review round created ({count} findings)" }
+"notify.round_created_counts" = { ja = "レビューラウンドが作成されました（指摘 {count} 件・ブロッキング {blocking} 件）", en = "Review round created ({count} findings, {blocking} blocking)" }
+"notify.finding_fixed" = { ja = "レビュー指摘が修正されました", en = "Review finding fixed" }
+"notify.finding_reopened" = { ja = "指摘が再オープンされました", en = "Finding reopened" }
+"notify.finding_verified" = { ja = "指摘が確認されました", en = "Finding verified" }
+"notify.finding_deferred" = { ja = "指摘が保留されました", en = "Finding deferred" }
+"notify.outdated" = { ja = "レビューが古くなっています", en = "Review is outdated" }
+"notify.generic" = { ja = "通知", en = "Notification" }
+"auth.state_mismatch" = { ja = "state が一致しません。Koyori からもう一度サインインしてください。", en = "State mismatch." }
+"auth.failed" = { ja = "認可に失敗しました。", en = "Authorization failed." }
+"auth.signed_in" = { ja = "サインインしました。このウィンドウを閉じて Koyori に戻ってください。", en = "Signed in. You can return to Koyori." }
+"auth.missing_code" = { ja = "認可コードがありません。", en = "Missing code." }
+"tray.open" = { ja = "Koyori を開く", en = "Open Koyori" }
+"tray.notifications" = { ja = "通知", en = "Notifications" }
+"tray.quit" = { ja = "Koyori を終了", en = "Quit Koyori" }
+"tray.unread_tooltip" = { ja = "Koyori · 未読 {count} 件", en = "Koyori · {count} unread" }

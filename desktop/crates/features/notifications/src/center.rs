@@ -14,6 +14,7 @@ use gpui_kit::component::list::{List, ListDelegate, ListItem, ListState};
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
+use i18n::t;
 
 const PAGE_SIZE: u32 = 50;
 
@@ -30,10 +31,10 @@ impl Filter {
 
     fn label(self) -> &'static str {
         match self {
-            Self::All => "All",
-            Self::Unread => "Unread",
-            Self::Task => "Task",
-            Self::Review => "Review",
+            Self::All => t!("notifications.filter.all"),
+            Self::Unread => t!("notifications.filter.unread"),
+            Self::Task => t!("notifications.filter.task"),
+            Self::Review => t!("notifications.filter.review"),
         }
     }
 
@@ -154,9 +155,9 @@ impl ListDelegate for NotificationListDelegate {
             .text_sm()
             .text_color(Theme::global(cx).muted_foreground)
             .child(if self.signed_in {
-                "No notifications"
+                t!("notifications.center.empty")
             } else {
-                "Sign in to see notifications"
+                t!("notifications.center.signed_out")
             })
     }
 
@@ -541,20 +542,21 @@ impl Render for NotificationCenter {
                         div()
                             .text_lg()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("Notifications"),
+                            .child(t!("notifications.center.title")),
                     )
                     .child(div().flex_1())
                     .child(
                         Button::new("nc-refresh")
                             .ghost()
                             .icon(IconName::RefreshCcwDot)
+                            .tooltip(t!("notifications.center.refresh"))
                             .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
                     )
                     .child(
                         Button::new("nc-mark-all")
                             .ghost()
                             .icon(IconName::Check)
-                            .label("Mark all read")
+                            .label(t!("notifications.center.mark_all_read"))
                             .on_click(cx.listener(|this, _, _, cx| this.mark_all_read(cx))),
                     ),
             )
@@ -599,23 +601,26 @@ impl Render for NotificationCenter {
                         .p_2()
                         .text_xs()
                         .text_color(c.muted_foreground)
-                        .child("Loading…"),
+                        .child(t!("notifications.center.loading")),
                 )
             })
     }
 }
 
-/// "just now" / "5m" / "3h" / "2d" / "2026-09-24"。
+/// "たった今" / "5分前" / "3時間前" / "昨日" / "2日前" / "2026-09-24"
+/// （en: "just now" / "5m" / "3h" / "1d" / "2d"）。
 fn relative_time(dt: &DateTime<Utc>) -> String {
     let secs = (Utc::now() - *dt).num_seconds().max(0);
     if secs < 60 {
-        "just now".into()
+        t!("notifications.time.just_now").into()
     } else if secs < 3600 {
-        format!("{}m", secs / 60)
+        t!("notifications.time.minutes_ago", n = secs / 60)
     } else if secs < 86400 {
-        format!("{}h", secs / 3600)
+        t!("notifications.time.hours_ago", n = secs / 3600)
+    } else if secs < 2 * 86400 {
+        t!("notifications.time.yesterday").into()
     } else if secs < 7 * 86400 {
-        format!("{}d", secs / 86400)
+        t!("notifications.time.days_ago", n = secs / 86400)
     } else {
         dt.format("%Y-%m-%d").to_string()
     }
@@ -627,6 +632,7 @@ mod tests {
     use super::{Filter, relative_time};
     use api::spec::{NotificationItem, NotificationKind};
     use chrono::Utc;
+    use i18n::t;
 
     #[test]
     fn filter_query_shape() {
@@ -672,10 +678,23 @@ mod tests {
         let now = Utc::now();
         assert_eq!(
             relative_time(&(now - chrono::Duration::seconds(10))),
-            "just now"
+            t!("notifications.time.just_now")
         );
-        assert_eq!(relative_time(&(now - chrono::Duration::minutes(5))), "5m");
-        assert_eq!(relative_time(&(now - chrono::Duration::hours(3))), "3h");
-        assert_eq!(relative_time(&(now - chrono::Duration::days(2))), "2d");
+        assert_eq!(
+            relative_time(&(now - chrono::Duration::minutes(5))),
+            t!("notifications.time.minutes_ago", n = 5)
+        );
+        assert_eq!(
+            relative_time(&(now - chrono::Duration::hours(3))),
+            t!("notifications.time.hours_ago", n = 3)
+        );
+        assert_eq!(
+            relative_time(&(now - chrono::Duration::hours(30))),
+            t!("notifications.time.yesterday")
+        );
+        assert_eq!(
+            relative_time(&(now - chrono::Duration::days(2))),
+            t!("notifications.time.days_ago", n = 2)
+        );
     }
 }

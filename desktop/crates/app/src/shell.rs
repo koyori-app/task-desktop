@@ -17,6 +17,8 @@ use feature_reviews::{ReviewDetailEvent, ReviewDetailView, ReviewListEvent, Revi
 use feature_settings::{SettingsEvent, SettingsView};
 use feature_tasks::{ListMode, TaskDetailEvent, TaskDetailView, TaskListEvent, TaskListView};
 
+use i18n::t;
+
 use crate::palette::{PaletteKind, PaletteView};
 use crate::theme::{self, KoyoriColors};
 
@@ -217,6 +219,12 @@ impl AppShell {
                 SettingsEvent::Changed(settings) => {
                     // Feature settings can lag behind sync/layout changes. Preserve that state.
                     this.settings.appearance = settings.appearance;
+                    if this.settings.language != settings.language {
+                        this.settings.language = settings.language;
+                        i18n::set_language(settings.language);
+                        // 文言は render のたびに引くので、全ウィンドウを描き直せば切り替わる。
+                        cx.refresh_windows();
+                    }
                     this.settings.launch_at_login = settings.launch_at_login;
                     this.settings.keep_running_in_background = settings.keep_running_in_background;
                     this.settings.notifications = settings.notifications.clone();
@@ -396,13 +404,13 @@ impl AppShell {
         ) {
             Ok(p) => p,
             Err(_) => {
-                self.auth_error = Some("Failed to start authorization".into());
+                self.auth_error = Some(t!("app.login.start_failed").into());
                 cx.notify();
                 return;
             }
         };
         if ::platform::open_url(pending.authorize_url()).is_err() {
-            self.auth_error = Some("Failed to open browser".into());
+            self.auth_error = Some(t!("app.login.browser_failed").into());
             cx.notify();
             return;
         }
@@ -428,7 +436,7 @@ impl AppShell {
                 Some(client) => s.complete_login(client, cx),
                 None => {
                     s.auth_waiting = false;
-                    s.auth_error = Some("Sign-in failed or timed out".into());
+                    s.auth_error = Some(t!("app.login.failed").into());
                     cx.notify();
                 }
             });
@@ -643,7 +651,7 @@ impl AppShell {
                 let _ = ::platform::CredentialStore::new(::platform::CREDENTIAL_SERVICE)
                     .delete(::platform::CREDENTIAL_ACCOUNT_TOKEN);
             }
-            self.auth_error = Some("Your session expired. Please sign in again.".into());
+            self.auth_error = Some(t!("app.login.expired").into());
         }
         self.set_unread_count(0, cx);
         self.route = Route::MyTasks;
@@ -710,7 +718,7 @@ impl AppShell {
                     .iter()
                     .find(|project| project.id == p)
                     .map(|project| project.key.clone())
-                    .unwrap_or_else(|| "Project".into());
+                    .unwrap_or_else(|| t!("app.page.project").into());
                 self.task_list
                     .update(cx, |l, cx| l.set_mode(ListMode::Project { id: p, key }, cx));
                 self.task_detail.update(cx, |d, cx| d.open(p, t, cx));
@@ -769,9 +777,19 @@ impl AppShell {
 
     fn sidebar(&self, colors: &KoyoriColors, cx: &mut Context<Self>) -> impl IntoElement {
         let main_group = SidebarGroup::new("").children([
-            self.nav_item(Route::MyTasks, "My Tasks", IconName::ListTodo, cx),
-            self.nav_item(Route::Today, "Today", IconName::Calendar, cx),
-            self.nav_item(Route::Upcoming, "Upcoming", IconName::CalendarClock, cx),
+            self.nav_item(
+                Route::MyTasks,
+                t!("app.nav.my_tasks"),
+                IconName::ListTodo,
+                cx,
+            ),
+            self.nav_item(Route::Today, t!("app.nav.today"), IconName::Calendar, cx),
+            self.nav_item(
+                Route::Upcoming,
+                t!("app.nav.upcoming"),
+                IconName::CalendarClock,
+                cx,
+            ),
         ]);
 
         // Reviews タブや Task 詳細にいる間もどのプロジェクトか分かるよう、
@@ -802,7 +820,7 @@ impl AppShell {
 
         let unread = self.unread_count;
         let danger = colors.danger;
-        let notifications = SidebarMenuItem::new("Notifications")
+        let notifications = SidebarMenuItem::new(t!("app.nav.notifications"))
             .icon(IconName::Bell)
             .active(self.route == Route::Notifications)
             .suffix(move |_, _| div().when(unread > 0, |d| d.child(count_pill(unread, danger))))
@@ -818,7 +836,7 @@ impl AppShell {
                 Sidebar::new("sidebar")
                     .w_full()
                     .child(main_group)
-                    .child(SidebarGroup::new("Projects").children(project_items))
+                    .child(SidebarGroup::new(t!("app.nav.projects")).children(project_items))
                     .child(SidebarGroup::new("").child(notifications)),
             )
     }
@@ -831,7 +849,7 @@ impl AppShell {
             .iter()
             .find(|t| Some(t.id) == tenant_id)
             .map(|t| t.name.clone())
-            .unwrap_or_else(|| "Tenant".into());
+            .unwrap_or_else(|| t!("app.header.tenant").into());
         let tenant_items: Vec<(uuid::Uuid, SharedString)> = self
             .tenants
             .iter()
@@ -858,7 +876,7 @@ impl AppShell {
                 Button::new("toggle-sidebar")
                     .ghost()
                     .icon(IconName::Menu)
-                    .tooltip("Toggle sidebar")
+                    .tooltip(t!("app.header.toggle_sidebar"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.sidebar_visible = !this.sidebar_visible;
                         cx.notify();
@@ -873,7 +891,7 @@ impl AppShell {
             .child(
                 Button::new("tenant-switcher")
                     .ghost()
-                    .tooltip("Switch tenant")
+                    .tooltip(t!("app.header.switch_tenant"))
                     .label(tenant_name)
                     .icon(IconName::ChevronDown)
                     .dropdown_menu(move |menu, _, _| {
@@ -907,15 +925,20 @@ impl AppShell {
                     .text_xs()
                     .text_color(colors.text_muted)
                     .child(match self.connection {
-                        ConnectionStatus::Online => "Connected",
-                        ConnectionStatus::Offline => "Reconnecting…",
+                        ConnectionStatus::Online => t!("app.header.connected"),
+                        ConnectionStatus::Offline => t!("app.header.reconnecting"),
                     }),
             )
             .child(
                 Button::new("search")
                     .ghost()
                     .icon(IconName::Search)
-                    .tooltip("Search tasks and projects (Ctrl+P) · Commands (Ctrl+K)")
+                    .tooltip(t!(
+                        "app.header.search",
+                        search = shortcut_label(&self.settings, "quick_search", "ctrl-p", "cmd-p"),
+                        palette =
+                            shortcut_label(&self.settings, "command_palette", "ctrl-k", "cmd-k")
+                    ))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.toggle_palette(PaletteKind::QuickSearch, window, cx)
                     })),
@@ -924,7 +947,7 @@ impl AppShell {
                 Button::new("notifications")
                     .ghost()
                     .icon(IconName::Bell)
-                    .tooltip("Notifications")
+                    .tooltip(t!("app.header.notifications"))
                     .label(if self.unread_count > 0 {
                         self.unread_count.to_string()
                     } else {
@@ -938,11 +961,14 @@ impl AppShell {
                 Button::new("settings")
                     .ghost()
                     .icon(IconName::Settings)
-                    .tooltip(if cfg!(target_os = "macos") {
-                        "Settings (Cmd+,)"
-                    } else {
-                        "Settings (Ctrl+,)"
-                    })
+                    .tooltip(t!(
+                        "app.header.settings",
+                        key = if cfg!(target_os = "macos") {
+                            "Cmd+,"
+                        } else {
+                            "Ctrl+,"
+                        }
+                    ))
                     .selected(self.route == Route::Settings)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_settings(cx))),
             )
@@ -1129,33 +1155,33 @@ impl AppShell {
             PaletteKind::Commands => {
                 if self.review_detail.read(cx).current_review().is_some() {
                     v.push(PaletteEntry {
-                        label: "Open Current Review".into(),
+                        label: t!("app.palette.open_current_review").into(),
                         icon: IconName::SquareCheck,
                         keywords: vec![],
                         act: PaletteAct::OpenCurrentReview,
                     });
                 }
                 v.push(PaletteEntry {
-                    label: "Create Task".into(),
+                    label: t!("app.palette.create_task").into(),
                     icon: IconName::Plus,
                     keywords: vec![],
                     act: PaletteAct::CreateTask,
                 });
                 v.push(PaletteEntry {
-                    label: "Search Tasks".into(),
+                    label: t!("app.palette.search_tasks").into(),
                     icon: IconName::Search,
                     keywords: vec![],
                     act: PaletteAct::SearchTasks,
                 });
                 v.push(PaletteEntry {
-                    label: "Toggle Sidebar".into(),
+                    label: t!("app.palette.toggle_sidebar").into(),
                     icon: IconName::Menu,
                     keywords: vec![],
                     act: PaletteAct::ToggleSidebar,
                 });
                 if matches!(self.route, Route::Reviews { .. }) {
                     v.push(PaletteEntry {
-                        label: "Start Review".into(),
+                        label: t!("app.palette.start_review").into(),
                         icon: IconName::Plus,
                         keywords: vec![],
                         act: PaletteAct::StartReview,
@@ -1163,11 +1189,11 @@ impl AppShell {
                     for state in self.review_detail.read(cx).available_actions() {
                         use api::types::FindingState;
                         let label = match state {
-                            FindingState::Fixed => "Mark Finding as Fixed",
-                            FindingState::Verified => "Verify Finding",
-                            FindingState::Open => "Reopen Finding",
-                            FindingState::Deferred => "Defer Finding",
-                            FindingState::Rejected => "Reject Finding",
+                            FindingState::Fixed => t!("app.palette.finding_fixed"),
+                            FindingState::Verified => t!("app.palette.finding_verified"),
+                            FindingState::Open => t!("app.palette.finding_open"),
+                            FindingState::Deferred => t!("app.palette.finding_deferred"),
+                            FindingState::Rejected => t!("app.palette.finding_rejected"),
                         };
                         v.push(PaletteEntry {
                             label: label.into(),
@@ -1177,15 +1203,31 @@ impl AppShell {
                         });
                     }
                 }
-                v.push(nav("Go to My Tasks", IconName::ListTodo, Route::MyTasks));
-                v.push(nav("Go to Today", IconName::Calendar, Route::Today));
-                v.push(nav("Go to Upcoming", IconName::Calendar, Route::Upcoming));
                 v.push(nav(
-                    "Go to Notifications",
+                    t!("app.palette.go_my_tasks"),
+                    IconName::ListTodo,
+                    Route::MyTasks,
+                ));
+                v.push(nav(
+                    t!("app.palette.go_today"),
+                    IconName::Calendar,
+                    Route::Today,
+                ));
+                v.push(nav(
+                    t!("app.palette.go_upcoming"),
+                    IconName::Calendar,
+                    Route::Upcoming,
+                ));
+                v.push(nav(
+                    t!("app.palette.go_notifications"),
                     IconName::Bell,
                     Route::Notifications,
                 ));
-                v.push(nav("Go to Settings", IconName::Settings, Route::Settings));
+                v.push(nav(
+                    t!("app.palette.go_settings"),
+                    IconName::Settings,
+                    Route::Settings,
+                ));
                 for p in &self.projects {
                     v.push(PaletteEntry {
                         label: format!("{}: Tasks", p.key).into(),
@@ -1204,7 +1246,7 @@ impl AppShell {
                     });
                 }
                 v.push(PaletteEntry {
-                    label: "Mark all notifications read".into(),
+                    label: t!("app.palette.mark_all_read").into(),
                     icon: IconName::Check,
                     keywords: vec![],
                     act: PaletteAct::MarkAllRead,
@@ -1213,7 +1255,7 @@ impl AppShell {
                 if self.tenants.len() > 1 {
                     for t in &self.tenants {
                         v.push(PaletteEntry {
-                            label: format!("Switch to {}", t.name).into(),
+                            label: t!("app.palette.switch_tenant", name = t.name).into(),
                             icon: IconName::Users,
                             keywords: vec!["tenant".into(), t.name.clone().into()],
                             act: PaletteAct::SwitchTenant(t.id),
@@ -1221,7 +1263,7 @@ impl AppShell {
                     }
                 }
                 v.push(PaletteEntry {
-                    label: "Refresh tasks".into(),
+                    label: t!("app.palette.refresh_tasks").into(),
                     icon: IconName::RefreshCcwDot,
                     keywords: vec![],
                     act: PaletteAct::RefreshTasks,
@@ -1343,8 +1385,8 @@ impl AppShell {
         let shell = cx.entity().downgrade();
         TabBar::new("project-tabs")
             .selected_index(if tasks_active { 0 } else { 1 })
-            .child(Tab::new().label("Tasks"))
-            .child(Tab::new().label("Reviews"))
+            .child(Tab::new().label(t!("app.tab.tasks")))
+            .child(Tab::new().label(t!("app.tab.reviews")))
             .on_click(move |index, _, cx| {
                 let route = if *index == 0 {
                     Route::Project {
@@ -1376,9 +1418,9 @@ impl AppShell {
         }
         // タスク系ルートは全て §15 の一覧を表示。見出しで今どの一覧かを示す。
         let personal = match self.route {
-            Route::MyTasks => Some(("My Tasks", "Tasks assigned to you across all projects")),
-            Route::Today => Some(("Today", "Assigned to you, due today or overdue")),
-            Route::Upcoming => Some(("Upcoming", "Assigned to you, due after today")),
+            Route::MyTasks => Some((t!("app.nav.my_tasks"), t!("app.page.my_tasks_desc"))),
+            Route::Today => Some((t!("app.nav.today"), t!("app.page.today_desc"))),
+            Route::Upcoming => Some((t!("app.nav.upcoming"), t!("app.page.upcoming_desc"))),
             _ => None,
         };
         if let Some((title, subtitle)) = personal {
@@ -1398,12 +1440,15 @@ impl AppShell {
                 .iter()
                 .find(|p| p.id == project)
                 .map(|p| (p.key.clone(), p.name.clone()))
-                .unwrap_or_else(|| ("Project".into(), "Project".into()));
+                .unwrap_or_else(|| {
+                    let project = t!("app.page.project").to_string();
+                    (project.clone(), project)
+                });
             let reviews = matches!(self.route, Route::Reviews { .. });
             let subtitle = if name == key {
-                "Project".to_string()
+                t!("app.page.project").to_string()
             } else {
-                format!("Project · {key}")
+                t!("app.page.project_key", key = key)
             };
             return div()
                 .size_full()
@@ -1420,7 +1465,7 @@ impl AppShell {
                 }));
         }
         let title: SharedString = match &self.route {
-            Route::Settings => "Settings".into(),
+            Route::Settings => t!("app.nav.settings").into(),
             _ => "—".into(),
         };
         div().flex_1().h_full().p_4().child(
@@ -1467,7 +1512,7 @@ impl AppShell {
                 div()
                     .text_sm()
                     .text_color(colors.text_muted)
-                    .child("Select an item"),
+                    .child(t!("app.select_item")),
             )
     }
 
@@ -1497,16 +1542,16 @@ impl AppShell {
                         div()
                             .text_sm()
                             .text_color(colors.text_muted)
-                            .child("Sign in with your Koyori account"),
+                            .child(t!("app.login.subtitle")),
                     )
                     .child(
                         Button::new("signin")
                             .primary()
                             .icon(Icon::new(IconName::LogIn))
                             .label(if waiting {
-                                "Waiting for browser…"
+                                t!("app.login.waiting")
                             } else {
-                                "Sign in with Koyori"
+                                t!("app.login.sign_in")
                             })
                             .when(!waiting, |b| {
                                 b.on_click(cx.listener(|this, _, _, cx| this.begin_login(cx)))
@@ -1715,4 +1760,27 @@ fn count_pill(count: i64, color: Hsla) -> Div {
         .text_size(px(11.))
         .font_weight(FontWeight::SEMIBOLD)
         .child(text)
+}
+
+/// ツールチップに出すショートカット表記（例: `ctrl-p` → `Ctrl+P`）。
+fn shortcut_label(settings: &core::Settings, action: &str, default: &str, mac: &str) -> String {
+    let key = settings
+        .keybindings
+        .get(action)
+        .map(String::as_str)
+        .unwrap_or(if cfg!(target_os = "macos") {
+            mac
+        } else {
+            default
+        });
+    key.split('-')
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("+")
 }

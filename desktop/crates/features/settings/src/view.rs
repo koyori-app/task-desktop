@@ -6,10 +6,12 @@ use core::settings::Appearance;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{Disableable, Icon, Selectable, Theme};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
+use i18n::t;
 
 /// app 層への通知。
 pub enum SettingsEvent {
@@ -155,7 +157,7 @@ impl SettingsView {
                 self.notice = None;
                 cx.emit(SettingsEvent::Changed(self.settings.clone()));
             }
-            Err(error) => self.notice = Some(format!("Could not save settings: {error}").into()),
+            Err(error) => self.notice = Some(t!("settings.save_error", error = error).into()),
         }
         cx.notify();
     }
@@ -214,7 +216,7 @@ impl SettingsView {
                 match result {
                     Ok(()) => {
                         s.devices.retain(|d| d.id != id);
-                        s.notice = Some("Device removed".into());
+                        s.notice = Some(t!("settings.account.device_removed").into());
                     }
                     Err(error) => s.notice = Some(error.to_string().into()),
                 }
@@ -259,7 +261,7 @@ impl SettingsView {
         let palette = self.palette_key.read(cx).value().trim().to_string();
         let search = self.search_key.read(cx).value().trim().to_string();
         if palette.is_empty() || search.is_empty() {
-            self.notice = Some("Keybinding must not be empty".into());
+            self.notice = Some(t!("settings.keyboard.empty").into());
             cx.notify();
             return;
         }
@@ -268,8 +270,7 @@ impl SettingsView {
                 .all(|part| Keystroke::parse(part).is_ok())
         };
         if !valid(&palette) || !valid(&search) || palette == search {
-            self.notice =
-                Some("Use two different valid shortcuts, such as ctrl-k and ctrl-p".into());
+            self.notice = Some(t!("settings.keyboard.invalid").into());
             cx.notify();
             return;
         }
@@ -281,7 +282,7 @@ impl SettingsView {
             cx,
         );
         if self.notice.is_none() {
-            self.notice = Some("Saved. Takes effect after restart.".into());
+            self.notice = Some(t!("settings.keyboard.saved").into());
         }
         cx.notify();
     }
@@ -312,7 +313,7 @@ impl SettingsView {
         if let Some(h) = &self.autolaunch
             && let Err(error) = if enabled { h.enable() } else { h.disable() }
         {
-            self.notice = Some(format!("Could not update login startup: {error}").into());
+            self.notice = Some(t!("settings.general.launch_error", error = error).into());
             cx.notify();
             return;
         }
@@ -346,22 +347,51 @@ impl SettingsView {
             cx,
             |s, v| s.keep_running_in_background = v,
         );
+        let current = s.language;
+        let owner = cx.entity().downgrade();
+        let language = Button::new("language-select")
+            .outline()
+            .compact()
+            .dropdown_caret(true)
+            .label(current.native_name())
+            .dropdown_menu(move |mut menu, _, _| {
+                for language in i18n::Language::ALL {
+                    let owner = owner.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(language.native_name())
+                            .checked(language == current)
+                            .on_click(move |_, _, cx| {
+                                let _ = owner.update(cx, |this, cx| {
+                                    this.mutate(|s| s.language = language, cx)
+                                });
+                            }),
+                    );
+                }
+                menu
+            })
+            .into_any_element();
         vec![group(
             c,
             vec![
                 row(
                     c,
-                    "Launch at login",
-                    Some("Start Koyori automatically when you sign in to your computer."),
+                    t!("settings.general.language"),
+                    Some(t!("settings.general.language_desc")),
+                    language,
+                ),
+                row(
+                    c,
+                    t!("settings.general.launch"),
+                    Some(t!("settings.general.launch_desc")),
                     launch,
                 ),
                 row(
                     c,
-                    "Keep running in background",
+                    t!("settings.general.background"),
                     Some(if self.background_available {
-                        "Closing the window keeps Koyori in the system tray so notifications still arrive."
+                        t!("settings.general.background_desc")
                     } else {
-                        "Unavailable: this desktop has no system tray, so closing the window quits Koyori."
+                        t!("settings.general.background_unavailable")
                     }),
                     background,
                 ),
@@ -377,39 +407,37 @@ impl SettingsView {
                 c,
                 vec![row(
                     c,
-                    "Desktop notifications",
-                    Some(
-                        "Show OS notifications for new activity. The Notification Center always receives everything.",
-                    ),
+                    t!("settings.notifications.desktop"),
+                    Some(t!("settings.notifications.desktop_desc")),
                     self.switch("notif-enabled", n.enabled, false, cx, |s, v| {
                         s.notifications.enabled = v
                     }),
                 )],
             ),
-            group_title(c, "Notify me about"),
+            group_title(c, t!("settings.notifications.notify_about")),
             group(
                 c,
                 vec![
                     row(
                         c,
-                        "Tasks",
-                        Some("Assignments, mentions, status changes and comments."),
+                        t!("settings.notifications.tasks"),
+                        Some(t!("settings.notifications.tasks_desc")),
                         self.switch("notif-task", n.task, off, cx, |s, v| {
                             s.notifications.task = v
                         }),
                     ),
                     row(
                         c,
-                        "Reviews",
-                        Some("New review rounds and finding state changes."),
+                        t!("settings.notifications.reviews"),
+                        Some(t!("settings.notifications.reviews_desc")),
                         self.switch("notif-review", n.review, off, cx, |s, v| {
                             s.notifications.review = v
                         }),
                     ),
                     row(
                         c,
-                        "Due dates",
-                        Some("Tasks that are about to reach their due date."),
+                        t!("settings.notifications.due"),
+                        Some(t!("settings.notifications.due_desc")),
                         self.switch("notif-due", n.due_date, off, cx, |s, v| {
                             s.notifications.due_date = v
                         }),
@@ -420,17 +448,15 @@ impl SettingsView {
                 c,
                 vec![row(
                     c,
-                    "Per-project settings",
-                    Some("Which events are recorded for each project is managed on the web."),
+                    t!("settings.notifications.per_project"),
+                    Some(t!("settings.notifications.per_project_desc")),
                     Button::new("notif-web-link")
                         .outline()
                         .compact()
-                        .label("Open on web")
+                        .label(t!("settings.notifications.open_web"))
                         .icon(Icon::new(IconName::ExternalLink))
                         .disabled(true)
-                        .tooltip(
-                            "Project notification settings are not available on the website yet",
-                        )
+                        .tooltip(t!("settings.notifications.open_web_unavailable"))
                         .into_any_element(),
                 )],
             ),
@@ -440,14 +466,26 @@ impl SettingsView {
     fn appearance_page(&self, c: &Colors, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let current = self.settings.appearance;
         let options = [
-            (Appearance::Light, "Light", IconName::Sun),
-            (Appearance::Dark, "Dark", IconName::Moon),
-            (Appearance::System, "System", IconName::Settings2),
+            (
+                Appearance::Light,
+                t!("settings.appearance.light"),
+                IconName::Sun,
+            ),
+            (
+                Appearance::Dark,
+                t!("settings.appearance.dark"),
+                IconName::Moon,
+            ),
+            (
+                Appearance::System,
+                t!("settings.appearance.system"),
+                IconName::Settings2,
+            ),
         ];
         let mut choices = div().flex().flex_row().gap_2();
         for (value, label, icon) in options {
             choices = choices.child(
-                Button::new(SharedString::from(format!("appearance-{label}")))
+                Button::new(SharedString::from(format!("appearance-{value:?}")))
                     .outline()
                     .compact()
                     .selected(current == value)
@@ -462,8 +500,8 @@ impl SettingsView {
             c,
             vec![row(
                 c,
-                "Theme",
-                Some("System follows your operating system's light or dark mode."),
+                t!("settings.appearance.theme"),
+                Some(t!("settings.appearance.theme_desc")),
                 choices.into_any_element(),
             )],
         )]
@@ -476,14 +514,14 @@ impl SettingsView {
                 vec![
                     row(
                         c,
-                        "Command palette",
-                        Some("Run any command from anywhere."),
+                        t!("settings.keyboard.palette"),
+                        Some(t!("settings.keyboard.palette_desc")),
                         Input::new(&self.palette_key).w(px(160.)).into_any_element(),
                     ),
                     row(
                         c,
-                        "Quick search",
-                        Some("Jump to a project or task."),
+                        t!("settings.keyboard.search"),
+                        Some(t!("settings.keyboard.search_desc")),
                         Input::new(&self.search_key).w(px(160.)).into_any_element(),
                     ),
                 ],
@@ -497,14 +535,14 @@ impl SettingsView {
                     Button::new("save-keybindings")
                         .primary()
                         .compact()
-                        .label("Save shortcuts")
+                        .label(t!("settings.keyboard.save"))
                         .on_click(cx.listener(|this, _, _, cx| this.save_keybindings(cx))),
                 )
                 .child(
                     div()
                         .text_xs()
                         .text_color(c.muted)
-                        .child("Use the form ctrl-k or cmd-shift-p. Takes effect after restart."),
+                        .child(t!("settings.keyboard.hint")),
                 )
                 .into_any_element(),
         ]
@@ -555,14 +593,18 @@ impl SettingsView {
                                 .text_color(c.muted)
                                 .child(profile.email.clone()),
                         )
-                        .child(div().text_xs().text_color(c.muted).child(format!(
-                            "Email {} · Two-factor authentication {}",
-                            if profile.email_verified {
-                                "verified"
+                        .child(div().text_xs().text_color(c.muted).child(t!(
+                            "settings.account.status",
+                            email = if profile.email_verified {
+                                t!("settings.account.verified")
                             } else {
-                                "not verified"
+                                t!("settings.account.not_verified")
                             },
-                            if profile.totp_enabled { "on" } else { "off" }
+                            totp = if profile.totp_enabled {
+                                t!("settings.account.on")
+                            } else {
+                                t!("settings.account.off")
+                            }
                         ))),
                 )
                 .into_any_element()
@@ -572,11 +614,11 @@ impl SettingsView {
                 .text_sm()
                 .text_color(c.muted)
                 .child(if self.profile_loading {
-                    "Loading account information…"
+                    t!("settings.account.loading")
                 } else if self.client.is_some() {
-                    "Signed in to Koyori"
+                    t!("settings.account.signed_in")
                 } else {
-                    "Not signed in"
+                    t!("settings.account.not_signed_in")
                 })
                 .into_any_element()
         };
@@ -584,12 +626,12 @@ impl SettingsView {
         if let Some(error) = &self.profile_error {
             profile_rows.push(row(
                 c,
-                "Could not load account",
+                t!("settings.account.load_error"),
                 Some(error.as_ref()),
                 Button::new("reload-account")
                     .outline()
                     .compact()
-                    .label("Retry")
+                    .label(t!("settings.account.retry"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(client) = this.client.clone() {
                             this.profile_loading = true;
@@ -603,7 +645,7 @@ impl SettingsView {
         }
         out.push(group(c, profile_rows));
 
-        out.push(group_title(c, "Devices"));
+        out.push(group_title(c, t!("settings.account.devices")));
         let own_device_id = self.own_device_id();
         let device_rows: Vec<AnyElement> = self
             .devices
@@ -617,21 +659,26 @@ impl SettingsView {
                     .unwrap_or_else(|| "—".into());
                 let weak = cx.entity().downgrade();
                 let title = if own {
-                    format!("{} (this device)", d.name)
+                    t!("settings.account.this_device", name = d.name)
                 } else {
                     d.name.clone()
                 };
                 row_owned(
                     c,
                     title,
-                    Some(format!(
-                        "Last used {last} · Expires {}",
-                        d.expires_at.format("%Y-%m-%d")
+                    Some(t!(
+                        "settings.account.device_meta",
+                        last = last,
+                        expires = d.expires_at.format("%Y-%m-%d")
                     )),
                     Button::new(SharedString::from(format!("revoke-{id}")))
                         .outline()
                         .compact()
-                        .label(if own { "Log out" } else { "Revoke" })
+                        .label(if own {
+                            t!("settings.account.logout")
+                        } else {
+                            t!("settings.account.revoke")
+                        })
                         .on_click(move |_, _, cx| {
                             let _ = weak.update(cx, |this, cx| this.revoke_device(id, cx));
                         })
@@ -648,9 +695,9 @@ impl SettingsView {
                         .text_sm()
                         .text_color(c.muted)
                         .child(if self.devices_loading {
-                            "Loading devices…"
+                            t!("settings.account.loading_devices")
                         } else {
-                            "No devices"
+                            t!("settings.account.no_devices")
                         })
                         .into_any_element(),
                 ],
@@ -663,13 +710,13 @@ impl SettingsView {
             c,
             vec![row(
                 c,
-                "Log out",
-                Some("Sign out of Koyori on this computer and revoke its device token."),
+                t!("settings.account.logout"),
+                Some(t!("settings.account.logout_desc")),
                 Button::new("logout")
                     .danger()
                     .compact()
                     .disabled(self.client.is_none())
-                    .label("Log out")
+                    .label(t!("settings.account.logout"))
                     .icon(Icon::new(IconName::LogOut))
                     .on_click(cx.listener(|this, _, _, cx| this.logout(cx)))
                     .into_any_element(),
@@ -809,8 +856,8 @@ impl Render for SettingsView {
                         .ghost()
                         .compact()
                         .icon(IconName::ArrowLeft)
-                        .label("Back")
-                        .tooltip("Back (Esc)")
+                        .label(t!("settings.back"))
+                        .tooltip(t!("settings.back_tooltip"))
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Close))),
                 ),
             )
@@ -820,12 +867,12 @@ impl Render for SettingsView {
                     .pb_2()
                     .text_lg()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("Settings"),
+                    .child(t!("settings.title")),
             )
             .children(Section::ALL.into_iter().map(|item| {
                 let active = item == section;
                 div()
-                    .id(item.label())
+                    .id(SharedString::from(format!("settings-nav-{item:?}")))
                     .flex()
                     .flex_row()
                     .items_center()
@@ -919,11 +966,11 @@ impl Section {
 
     fn label(self) -> &'static str {
         match self {
-            Section::General => "General",
-            Section::Notifications => "Notifications",
-            Section::Appearance => "Appearance",
-            Section::Keyboard => "Keyboard",
-            Section::Account => "Account",
+            Section::General => t!("settings.section.general"),
+            Section::Notifications => t!("settings.section.notifications"),
+            Section::Appearance => t!("settings.section.appearance"),
+            Section::Keyboard => t!("settings.section.keyboard"),
+            Section::Account => t!("settings.section.account"),
         }
     }
 

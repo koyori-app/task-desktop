@@ -12,6 +12,7 @@ use gpui_kit::component::text::TextView;
 use gpui_kit::component::{Disableable, Theme, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
+use i18n::t;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -48,7 +49,7 @@ impl ListDelegate for FindingRows {
             .p_3()
             .text_sm()
             .text_color(Theme::global(cx).semantic_tokens().colors.muted_foreground)
-            .child("No findings in this round")
+            .child(t!("reviews.detail.no_findings"))
     }
     fn render_item(
         &mut self,
@@ -98,9 +99,9 @@ impl ListDelegate for FindingRows {
                                     div()
                                         .text_color(severity_color)
                                         .font_weight(FontWeight::MEDIUM)
-                                        .child(capitalize(&finding.severity.to_string())),
+                                        .child(severity_label(finding.severity)),
                                 )
-                                .child(capitalize(&finding.state.to_string())),
+                                .child(state_label(finding.state)),
                         ),
                 ),
         )
@@ -246,7 +247,7 @@ impl ReviewDetailView {
                     }
                     Err(api::ApiError::NotFound) => {
                         this.loading = false;
-                        this.error = Some("This review no longer exists.".into());
+                        this.error = Some(t!("reviews.detail.review_missing").into());
                     }
                     Err(e) => {
                         this.loading = false;
@@ -303,7 +304,7 @@ impl ReviewDetailView {
                     && !this.findings.iter().any(|f| f.id == id)
                 {
                     this.selected_finding = None;
-                    this.error = Some("This finding no longer exists.".into());
+                    this.error = Some(t!("reviews.detail.finding_missing").into());
                 }
                 if this.selected_finding.is_none() {
                     this.selected_finding = this.visible_findings().first().map(|f| f.id);
@@ -402,50 +403,60 @@ impl ReviewDetailView {
     }
 }
 
-/// API の小文字表記（`high` / `open`）を表示用に先頭だけ大文字化する。
-fn capitalize(value: &str) -> String {
-    let mut chars = value.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().chain(chars).collect(),
-        None => String::new(),
+pub(crate) fn severity_label(severity: FindingSeverity) -> &'static str {
+    match severity {
+        FindingSeverity::High => t!("reviews.severity.high"),
+        FindingSeverity::Medium => t!("reviews.severity.medium"),
+        FindingSeverity::Low => t!("reviews.severity.low"),
+        FindingSeverity::Nit => t!("reviews.severity.nit"),
+    }
+}
+
+fn state_label(state: FindingState) -> &'static str {
+    match state {
+        FindingState::Open => t!("reviews.state.open"),
+        FindingState::Fixed => t!("reviews.state.fixed"),
+        FindingState::Verified => t!("reviews.state.verified"),
+        FindingState::Deferred => t!("reviews.state.deferred"),
+        FindingState::Rejected => t!("reviews.state.rejected"),
     }
 }
 
 fn action_label(state: FindingState) -> &'static str {
     match state {
-        FindingState::Fixed => "Mark as Fixed",
-        FindingState::Verified => "Verify",
-        FindingState::Open => "Reopen",
-        FindingState::Deferred => "Defer",
-        FindingState::Rejected => "Reject",
+        FindingState::Fixed => t!("reviews.action.fixed"),
+        FindingState::Verified => t!("reviews.action.verify"),
+        FindingState::Open => t!("reviews.action.reopen"),
+        FindingState::Deferred => t!("reviews.action.defer"),
+        FindingState::Rejected => t!("reviews.action.reject"),
     }
 }
 fn gate_label(summary: &ReviewSummary) -> String {
     let short = |s: &Option<String>| {
         s.as_deref()
-            .unwrap_or("unknown")
+            .unwrap_or(t!("reviews.detail.unknown"))
             .chars()
             .take(7)
             .collect::<String>()
     };
     match summary.gate {
-        Some(Gate::Unlinked) => "Repository not linked · not used as a merge gate".into(),
-        Some(Gate::Unreviewed) => "Not reviewed".into(),
-        Some(Gate::Blocked) => format!("Blocked · {} findings", summary.blocking),
-        Some(Gate::StaleUnknown) => "Freshness unknown".into(),
-        Some(Gate::Outdated) => format!(
-            "Review is outdated · reviewed {} / current {}",
-            short(&summary.latest_head_sha),
-            short(&summary.cached_pr_head_sha)
+        Some(Gate::Unlinked) => t!("reviews.gate.unlinked").into(),
+        Some(Gate::Unreviewed) => t!("reviews.gate.unreviewed").into(),
+        Some(Gate::Blocked) => t!("reviews.gate.blocked", count = summary.blocking),
+        Some(Gate::StaleUnknown) => t!("reviews.gate.stale_unknown").into(),
+        Some(Gate::Outdated) => t!(
+            "reviews.gate.outdated",
+            reviewed = short(&summary.latest_head_sha),
+            current = short(&summary.cached_pr_head_sha)
         ),
-        Some(Gate::Ready) => format!(
-            "Ready · checked at {}",
-            summary
+        Some(Gate::Ready) => t!(
+            "reviews.gate.ready",
+            time = summary
                 .pr_head_checked_at
                 .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
-                .unwrap_or_else(|| "unknown".into())
+                .unwrap_or_else(|| t!("reviews.detail.unknown").into())
         ),
-        None => "Review gate unavailable".into(),
+        None => t!("reviews.gate.unavailable").into(),
     }
 }
 
@@ -455,10 +466,9 @@ impl Render for ReviewDetailView {
         let t = Theme::global(cx).clone();
         let c = t.semantic_tokens().colors;
         if self.note_input.is_none() {
-            self.note_input =
-                Some(cx.new(|cx| {
-                    InputState::new(window, cx).placeholder("Transition note (optional)")
-                }));
+            self.note_input = Some(cx.new(|cx| {
+                InputState::new(window, cx).placeholder(t!("reviews.detail.note_placeholder"))
+            }));
         }
         if self.finding_list.is_none() {
             let list = cx.new(|cx| {
@@ -502,11 +512,11 @@ impl Render for ReviewDetailView {
                 .text_sm()
                 .text_color(c.muted_foreground)
                 .child(if self.loading {
-                    "Loading review…".into()
+                    t!("reviews.detail.loading").into()
                 } else {
                     self.error
                         .clone()
-                        .unwrap_or_else(|| "Select a pull request".into())
+                        .unwrap_or_else(|| t!("reviews.detail.empty").into())
                 });
         };
         let selected_round = self
@@ -517,7 +527,7 @@ impl Render for ReviewDetailView {
         let rounds = TabBar::new("review-rounds")
             .selected_index(selected_round)
             .menu(true)
-            .child(Tab::new().label("All rounds"))
+            .child(Tab::new().label(t!("reviews.detail.all_rounds")))
             .children(
                 self.reviews
                     .iter()
@@ -578,7 +588,12 @@ impl Render for ReviewDetailView {
                     div()
                         .text_xs()
                         .text_color(c.muted_foreground)
-                        .child(format!("R{} · {} · {}", f.round, f.severity, f.state)),
+                        .child(format!(
+                            "R{} · {} · {}",
+                            f.round,
+                            severity_label(f.severity),
+                            state_label(f.state)
+                        )),
                 )
                 .when_some(f.file.clone(), |d, file| {
                     d.child(
@@ -596,7 +611,7 @@ impl Render for ReviewDetailView {
                     d.child(
                         Button::new("deferred-task")
                             .ghost()
-                            .label("Open deferred task")
+                            .label(t!("reviews.action.open_task"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Some(project) = this.project {
                                     cx.emit(ReviewDetailEvent::OpenTask { project, task });
@@ -612,7 +627,7 @@ impl Render for ReviewDetailView {
                     div()
                         .text_sm()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child("History"),
+                        .child(t!("reviews.detail.history")),
                 );
             for (ix, change) in f.transitions.iter().enumerate() {
                 body = body.child(
@@ -634,9 +649,9 @@ impl Render for ReviewDetailView {
                                     change.created_at.format("%Y-%m-%d %H:%M"),
                                     change
                                         .from_state
-                                        .map(|s| s.to_string())
-                                        .unwrap_or_else(|| "created".into()),
-                                    change.to_state
+                                        .map(state_label)
+                                        .unwrap_or(t!("reviews.detail.created")),
+                                    state_label(change.to_state)
                                 )),
                         )
                         .when_some(change.note.clone(), |d, note| {
@@ -662,7 +677,7 @@ impl Render for ReviewDetailView {
                         div()
                             .text_lg()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!("PR #{pr}")),
+                            .child(t!("reviews.detail.pr", number = pr)),
                     )
                     .when_some(self.pr_title.clone(), |d, title| {
                         d.child(div().text_sm().child(title))
@@ -682,28 +697,29 @@ impl Render for ReviewDetailView {
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .child(gate_label(&s)),
                                 )
-                                .child(div().text_xs().text_color(c.muted_foreground).child(
-                                    format!(
-                                        "Repository: {} · {} rounds · {} owner override rejections",
-                                        s.repository.as_deref().unwrap_or("not linked"),
-                                        s.rounds,
-                                        s.owner_override_rejections
-                                    ),
-                                ))
-                                .child(div().text_xs().text_color(c.muted_foreground).child(
-                                    format!(
-                                        "Reviewed: {}",
-                                        s.latest_head_sha.as_deref().unwrap_or("unknown")
-                                    ),
-                                ))
-                                .child(div().text_xs().text_color(c.muted_foreground).child(
-                                    format!(
-                                            "Checked: {}",
-                                            s.pr_head_checked_at
-                                                .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
-                                                .unwrap_or_else(|| "unknown".into())
-                                        ),
-                                )),
+                                .child(div().text_xs().text_color(c.muted_foreground).child(t!(
+                                        "reviews.detail.repository",
+                                        repository = s
+                                            .repository
+                                            .as_deref()
+                                            .unwrap_or(t!("reviews.detail.not_linked")),
+                                        rounds = s.rounds,
+                                        rejections = s.owner_override_rejections
+                                    )))
+                                .child(div().text_xs().text_color(c.muted_foreground).child(t!(
+                                        "reviews.detail.reviewed",
+                                        sha = s
+                                            .latest_head_sha
+                                            .as_deref()
+                                            .unwrap_or(t!("reviews.detail.unknown"))
+                                    )))
+                                .child(div().text_xs().text_color(c.muted_foreground).child(t!(
+                                        "reviews.detail.checked",
+                                        time = s
+                                            .pr_head_checked_at
+                                            .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+                                            .unwrap_or_else(|| t!("reviews.detail.unknown").into())
+                                    ))),
                         )
                     })
                     .child(rounds)
@@ -719,19 +735,19 @@ impl Render for ReviewDetailView {
                                     .gap_1()
                                     .text_xs()
                                     .text_color(c.muted_foreground)
-                                    .child(format!(
-                                        "R{} · {}{} · {} findings · {}",
-                                        r.round,
-                                        r.reviewer.username,
-                                        if r.reviewer_left_tenant {
-                                            " (left tenant)"
+                                    .child(t!(
+                                        "reviews.detail.round_meta",
+                                        round = r.round,
+                                        reviewer = r.reviewer.username,
+                                        left = if r.reviewer_left_tenant {
+                                            t!("reviews.detail.left_tenant")
                                         } else {
                                             ""
                                         },
-                                        r.finding_count,
-                                        r.created_at.format("%Y-%m-%d %H:%M")
+                                        count = r.finding_count,
+                                        time = r.created_at.format("%Y-%m-%d %H:%M")
                                     ))
-                                    .child(format!("Head: {}", r.head_sha))
+                                    .child(t!("reviews.detail.head", sha = r.head_sha))
                                     .when(!r.summary.is_empty(), |d| {
                                         d.child(
                                             TextView::markdown(

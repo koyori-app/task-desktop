@@ -1,3 +1,18 @@
 # notifications の表示文字列。キーは "notifications.<key>"（t!("notifications.<key>")）。
 # 1 行 1 キーで ja / en を並べる。引数は {name} で埋め込む。
 
+"center.title" = { ja = "通知", en = "Notifications" }
+"center.refresh" = { ja = "再読み込み", en = "Refresh" }
+"center.mark_all_read" = { ja = "すべて既読にする", en = "Mark all read" }
+"center.empty" = { ja = "通知はありません", en = "No notifications" }
+"center.signed_out" = { ja = "サインインすると通知が表示されます", en = "Sign in to see notifications" }
+"center.loading" = { ja = "読み込み中…", en = "Loading…" }
+"filter.all" = { ja = "すべて", en = "All" }
+"filter.unread" = { ja = "未読", en = "Unread" }
+"filter.task" = { ja = "タスク", en = "Task" }
+"filter.review" = { ja = "レビュー", en = "Review" }
+"time.just_now" = { ja = "たった今", en = "just now" }
+"time.minutes_ago" = { ja = "{n}分前", en = "{n}m" }
+"time.hours_ago" = { ja = "{n}時間前", en = "{n}h" }
+"time.yesterday" = { ja = "昨日", en = "1d" }
+"time.days_ago" = { ja = "{n}日前", en = "{n}d" }

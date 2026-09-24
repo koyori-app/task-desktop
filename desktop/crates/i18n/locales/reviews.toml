@@ -1,3 +1,87 @@
 # reviews の表示文字列。キーは "reviews.<key>"（t!("reviews.<key>")）。
 # 1 行 1 キーで ja / en を並べる。引数は {name} で埋め込む。
 
+# PR 一覧
+"list.title" = { ja = "レビュー", en = "Reviews" }
+"list.refresh" = { ja = "レビューを再読み込み", en = "Refresh reviews" }
+"list.new" = { ja = "新しいレビュー", en = "New review" }
+"list.close_draft" = { ja = "下書きを閉じる", en = "Close draft" }
+"list.empty" = { ja = "レビュー済みのプルリクエストはありません", en = "No reviewed pull requests" }
+"list.untitled" = { ja = "無題のプルリクエスト", en = "Untitled pull request" }
+"list.unknown_author" = { ja = "作成者不明", en = "Unknown author" }
+"list.meta" = { ja = "{author} · {rounds} ラウンド · {time}", en = "{author} · {rounds} rounds · {time}" }
+"list.counts" = { ja = "未解決 {unresolved} · ブロッキング {blocking}", en = "{unresolved} unresolved · {blocking} blocking" }
+
+# レビュー作成フォーム
+"form.title" = { ja = "新しいレビューラウンド", en = "New review round" }
+"form.pr_placeholder" = { ja = "PR 番号", en = "PR number" }
+"form.sha_placeholder" = { ja = "ヘッド SHA（小文字 40 文字）", en = "40-character lowercase head SHA" }
+"form.repo_placeholder" = { ja = "リポジトリ（owner/name、任意）", en = "Repository (owner/name, optional)" }
+"form.host_placeholder" = { ja = "ホスト（例: github.com、任意）", en = "Host (e.g. github.com, optional)" }
+"form.summary_placeholder" = { ja = "総評（Markdown）", en = "Review summary (Markdown)" }
+"form.finding_title_placeholder" = { ja = "指摘のタイトル", en = "Finding title" }
+"form.finding_body_placeholder" = { ja = "指摘の内容（Markdown）", en = "Finding description (Markdown)" }
+"form.file_placeholder" = { ja = "ファイルパス（任意）", en = "File path (optional)" }
+"form.line_placeholder" = { ja = "行番号（任意）", en = "Line (optional)" }
+"form.sha_count" = { ja = "ヘッド SHA: {count} / 40 文字", en = "Head SHA: {count} / 40 characters" }
+"form.drafts_heading" = { ja = "下書きの指摘 · 送信時にまとめて追加されます", en = "Draft findings · added together on submit" }
+"form.remove" = { ja = "削除", en = "Remove" }
+"form.add_finding" = { ja = "指摘を下書きに追加", en = "Add finding to draft" }
+"form.submitting" = { ja = "送信中…", en = "Submitting…" }
+"form.submit" = { ja = "ラウンドを送信（指摘 {count} 件）", en = "Submit round ({count} findings)" }
+"form.error.pr_number" = { ja = "PR 番号は正の整数で入力してください。", en = "PR number must be a positive integer." }
+"form.error.sha" = { ja = "ヘッド SHA は小文字の 16 進数ちょうど 40 文字で入力してください（入力: {count} 文字）。", en = "Head SHA must contain exactly 40 lowercase hexadecimal characters ({count} characters entered)." }
+"form.error.finding_required" = { ja = "指摘のタイトルと内容を入力してください。", en = "Enter a finding title and description." }
+"form.error.line" = { ja = "行番号は正の数で入力してください。", en = "Line must be a positive number." }
+"form.error.no_project" = { ja = "レビューを送信する前にプロジェクトを選択してサインインしてください。", en = "Select a project and sign in before submitting a review." }
+"form.error.pending_finding" = { ja = "送信する前に、入力中の指摘を下書きに追加してください。", en = "Add the current finding to the draft before submitting." }
+
+# 詳細
+"detail.empty" = { ja = "プルリクエストを選ぶと詳細が表示されます", en = "Select a pull request" }
+"detail.loading" = { ja = "レビューを読み込み中…", en = "Loading review…" }
+"detail.no_findings" = { ja = "このラウンドに指摘はありません", en = "No findings in this round" }
+"detail.review_missing" = { ja = "このレビューはもう存在しません。", en = "This review no longer exists." }
+"detail.finding_missing" = { ja = "この指摘はもう存在しません。", en = "This finding no longer exists." }
+"detail.all_rounds" = { ja = "すべてのラウンド", en = "All rounds" }
+"detail.note_placeholder" = { ja = "状態変更のメモ（任意）", en = "Transition note (optional)" }
+"detail.history" = { ja = "履歴", en = "History" }
+"detail.created" = { ja = "作成", en = "created" }
+"detail.pr" = { ja = "PR #{number}", en = "PR #{number}" }
+"detail.repository" = { ja = "リポジトリ: {repository} · {rounds} ラウンド · オーナーによる却下 {rejections} 件", en = "Repository: {repository} · {rounds} rounds · {rejections} owner override rejections" }
+"detail.not_linked" = { ja = "未連携", en = "not linked" }
+"detail.unknown" = { ja = "不明", en = "unknown" }
+"detail.reviewed" = { ja = "レビュー時: {sha}", en = "Reviewed: {sha}" }
+"detail.checked" = { ja = "確認日時: {time}", en = "Checked: {time}" }
+"detail.round_meta" = { ja = "R{round} · {reviewer}{left} · 指摘 {count} 件 · {time}", en = "R{round} · {reviewer}{left} · {count} findings · {time}" }
+"detail.left_tenant" = { ja = "（テナント離脱済み）", en = " (left tenant)" }
+"detail.head" = { ja = "ヘッド: {sha}", en = "Head: {sha}" }
+
+# マージゲート（desktop.md §16.6）
+"gate.unlinked" = { ja = "リポジトリ未連携（ゲート対象外）", en = "Repository not linked · not used as a merge gate" }
+"gate.unreviewed" = { ja = "未レビュー", en = "Not reviewed" }
+"gate.blocked" = { ja = "ブロック中 · 指摘 {count} 件", en = "Blocked · {count} findings" }
+"gate.stale_unknown" = { ja = "最新か不明", en = "Freshness unknown" }
+"gate.outdated" = { ja = "レビューが古くなっています · レビュー時 {reviewed} / 現在 {current}", en = "Review is outdated · reviewed {reviewed} / current {current}" }
+"gate.ready" = { ja = "マージ可能 · {time} に確認", en = "Ready · checked at {time}" }
+"gate.unavailable" = { ja = "レビューゲートを取得できません", en = "Review gate unavailable" }
+
+# 重大度
+"severity.high" = { ja = "高", en = "High" }
+"severity.medium" = { ja = "中", en = "Medium" }
+"severity.low" = { ja = "低", en = "Low" }
+"severity.nit" = { ja = "軽微", en = "Nit" }
+
+# 指摘の状態
+"state.open" = { ja = "未対応", en = "Open" }
+"state.fixed" = { ja = "修正済み", en = "Fixed" }
+"state.verified" = { ja = "確認済み", en = "Verified" }
+"state.deferred" = { ja = "保留", en = "Deferred" }
+"state.rejected" = { ja = "却下", en = "Rejected" }
+
+# 指摘への操作
+"action.fixed" = { ja = "修正済みにする", en = "Mark as Fixed" }
+"action.verify" = { ja = "確認済みにする", en = "Verify" }
+"action.reopen" = { ja = "再オープン", en = "Reopen" }
+"action.defer" = { ja = "保留にする", en = "Defer" }
+"action.reject" = { ja = "却下する", en = "Reject" }
+"action.open_task" = { ja = "タスクを開く", en = "Open deferred task" }

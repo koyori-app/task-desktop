@@ -14,7 +14,10 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable, Selectable, Theme, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
+use i18n::t;
 use uuid::Uuid;
+
+use crate::detail::severity_label;
 
 #[derive(Debug, Clone)]
 pub enum ReviewListEvent {
@@ -32,10 +35,10 @@ fn review_request(
         .parse::<i32>()
         .ok()
         .filter(|n| *n > 0)
-        .ok_or_else(|| "PR number must be a positive integer.".to_string())?;
+        .ok_or_else(|| t!("reviews.form.error.pr_number").to_string())?;
     let sha = sha.trim();
-    let head_sha = CreateReviewRequestHeadSha::try_from(sha).map_err(|_| format!(
-        "Head SHA must contain exactly 40 lowercase hexadecimal characters ({} characters entered).", sha.chars().count()))?;
+    let head_sha = CreateReviewRequestHeadSha::try_from(sha)
+        .map_err(|_| t!("reviews.form.error.sha", count = sha.chars().count()))?;
     let summary = summary.trim();
     Ok(CreateReviewRequest {
         findings,
@@ -77,7 +80,7 @@ impl ListDelegate for PullRequestRows {
             .p_4()
             .text_sm()
             .text_color(Theme::global(cx).semantic_tokens().colors.muted_foreground)
-            .child("No reviewed pull requests")
+            .child(t!("reviews.list.empty"))
     }
     fn render_item(
         &mut self,
@@ -104,7 +107,9 @@ impl ListDelegate for PullRequestRows {
                             .child(format!(
                                 "#{} · {}",
                                 pr.pr_number,
-                                pr.pr_title.as_deref().unwrap_or("Untitled pull request")
+                                pr.pr_title
+                                    .as_deref()
+                                    .unwrap_or(t!("reviews.list.untitled"))
                             )),
                     )
                     .child(
@@ -112,11 +117,14 @@ impl ListDelegate for PullRequestRows {
                             .text_xs()
                             .text_color(c.muted_foreground)
                             .text_ellipsis()
-                            .child(format!(
-                                "{} · {} rounds · {}",
-                                pr.pr_author.as_deref().unwrap_or("Unknown author"),
-                                pr.rounds,
-                                pr.last_reviewed_at.format("%Y-%m-%d %H:%M")
+                            .child(t!(
+                                "reviews.list.meta",
+                                author = pr
+                                    .pr_author
+                                    .as_deref()
+                                    .unwrap_or(t!("reviews.list.unknown_author")),
+                                rounds = pr.rounds,
+                                time = pr.last_reviewed_at.format("%Y-%m-%d %H:%M")
                             )),
                     )
                     .child(
@@ -127,9 +135,10 @@ impl ListDelegate for PullRequestRows {
                             } else {
                                 c.muted_foreground
                             })
-                            .child(format!(
-                                "{} unresolved · {} blocking",
-                                pr.unresolved, pr.blocking
+                            .child(t!(
+                                "reviews.list.counts",
+                                unresolved = pr.unresolved,
+                                blocking = pr.blocking
                             )),
                     ),
             ),
@@ -204,25 +213,35 @@ impl ReviewListView {
             loading: false,
             error: None,
             shown_error: None,
-            pr_input: cx.new(|cx| InputState::new(window, cx).placeholder("PR number")),
+            pr_input: cx.new(|cx| {
+                InputState::new(window, cx).placeholder(t!("reviews.form.pr_placeholder"))
+            }),
             sha_input: cx.new(|cx| {
-                InputState::new(window, cx).placeholder("40-character lowercase head SHA")
+                InputState::new(window, cx).placeholder(t!("reviews.form.sha_placeholder"))
             }),
             repo_input: cx.new(|cx| {
-                InputState::new(window, cx).placeholder("Repository (owner/name, optional)")
+                InputState::new(window, cx).placeholder(t!("reviews.form.repo_placeholder"))
             }),
             host_input: cx.new(|cx| {
-                InputState::new(window, cx).placeholder("Host (e.g. github.com, optional)")
+                InputState::new(window, cx).placeholder(t!("reviews.form.host_placeholder"))
             }),
-            summary_input: cx
-                .new(|cx| TextareaState::new(window, cx).placeholder("Review summary (Markdown)")),
-            finding_title: cx.new(|cx| InputState::new(window, cx).placeholder("Finding title")),
+            summary_input: cx.new(|cx| {
+                TextareaState::new(window, cx).placeholder(t!("reviews.form.summary_placeholder"))
+            }),
+            finding_title: cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder(t!("reviews.form.finding_title_placeholder"))
+            }),
             finding_body: cx.new(|cx| {
-                TextareaState::new(window, cx).placeholder("Finding description (Markdown)")
+                TextareaState::new(window, cx)
+                    .placeholder(t!("reviews.form.finding_body_placeholder"))
             }),
-            finding_file: cx
-                .new(|cx| InputState::new(window, cx).placeholder("File path (optional)")),
-            finding_line: cx.new(|cx| InputState::new(window, cx).placeholder("Line (optional)")),
+            finding_file: cx.new(|cx| {
+                InputState::new(window, cx).placeholder(t!("reviews.form.file_placeholder"))
+            }),
+            finding_line: cx.new(|cx| {
+                InputState::new(window, cx).placeholder(t!("reviews.form.line_placeholder"))
+            }),
             severity: FindingSeverity::Medium,
             drafts: vec![],
             show_create: false,
@@ -335,7 +354,7 @@ impl ReviewListView {
         let title = self.finding_title.read(cx).value().trim().to_string();
         let body = self.finding_body.read(cx).value().trim().to_string();
         if title.is_empty() || body.is_empty() {
-            self.error = Some("Enter a finding title and description.".into());
+            self.error = Some(t!("reviews.form.error.finding_required").into());
             cx.notify();
             return;
         }
@@ -346,7 +365,7 @@ impl ReviewListView {
             match line_text.parse::<i32>() {
                 Ok(n) if n > 0 => Some(n),
                 _ => {
-                    self.error = Some("Line must be a positive number.".into());
+                    self.error = Some(t!("reviews.form.error.line").into());
                     cx.notify();
                     return;
                 }
@@ -372,7 +391,7 @@ impl ReviewListView {
         let (Some(client), Some(tenant), Some(project)) =
             (self.client.clone(), self.tenant, self.project)
         else {
-            self.error = Some("Select a project and sign in before submitting a review.".into());
+            self.error = Some(t!("reviews.form.error.no_project").into());
             cx.notify();
             return;
         };
@@ -392,7 +411,7 @@ impl ReviewListView {
         if !self.finding_title.read(cx).value().trim().is_empty()
             || !self.finding_body.read(cx).value().trim().is_empty()
         {
-            self.error = Some("Add the current finding to the draft before submitting.".into());
+            self.error = Some(t!("reviews.form.error.pending_finding").into());
             cx.notify();
             return;
         }
@@ -492,7 +511,7 @@ impl Render for ReviewListView {
                     .compact()
                     .selected(self.severity == severity)
                     .disabled(self.submitting)
-                    .label(severity.to_string())
+                    .label(severity_label(severity))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.severity = severity;
                         cx.notify();
@@ -510,7 +529,7 @@ impl Render for ReviewListView {
                 div()
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("New review round"),
+                    .child(t!("reviews.form.title")),
             )
             .child(
                 Input::new(&self.pr_input)
@@ -522,15 +541,10 @@ impl Render for ReviewListView {
                     .disabled(self.submitting)
                     .id("review-sha"),
             )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(c.muted_foreground)
-                    .child(format!(
-                        "Head SHA: {} / 40 characters",
-                        self.sha_input.read(cx).value().trim().chars().count()
-                    )),
-            )
+            .child(div().text_xs().text_color(c.muted_foreground).child(t!(
+                "reviews.form.sha_count",
+                count = self.sha_input.read(cx).value().trim().chars().count()
+            )))
             .child(
                 Input::new(&self.repo_input)
                     .disabled(self.submitting)
@@ -550,26 +564,24 @@ impl Render for ReviewListView {
                 div()
                     .text_xs()
                     .text_color(c.muted_foreground)
-                    .child("Draft findings · added together on submit"),
+                    .child(t!("reviews.form.drafts_heading")),
             )
             .children(self.drafts.iter().enumerate().map(|(ix, f)| {
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_sm()
-                            .child(format!("{} · {}", f.severity, f.title)),
-                    )
+                    .child(div().flex_1().min_w_0().text_sm().child(format!(
+                        "{} · {}",
+                        severity_label(f.severity),
+                        f.title
+                    )))
                     .child(
                         Button::new(("remove-draft", ix))
                             .disabled(self.submitting)
                             .compact()
                             .ghost()
-                            .label("Remove")
+                            .label(t!("reviews.form.remove"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if ix < this.drafts.len() {
                                     this.drafts.remove(ix);
@@ -601,7 +613,7 @@ impl Render for ReviewListView {
             )
             .child(
                 Button::new("add-finding")
-                    .label("Add finding to draft")
+                    .label(t!("reviews.form.add_finding"))
                     .disabled(self.submitting)
                     .on_click(cx.listener(|this, _, _, cx| this.add_finding(cx))),
             )
@@ -609,9 +621,9 @@ impl Render for ReviewListView {
                 Button::new("submit-review")
                     .primary()
                     .label(if self.submitting {
-                        "Submitting…".into()
+                        t!("reviews.form.submitting").into()
                     } else {
-                        format!("Submit round ({} findings)", self.drafts.len())
+                        t!("reviews.form.submit", count = self.drafts.len())
                     })
                     .disabled(self.submitting)
                     .on_click(cx.listener(|this, _, _, cx| this.create_review(cx))),
@@ -654,23 +666,23 @@ impl Render for ReviewListView {
                         div()
                             .text_lg()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("Reviews"),
+                            .child(t!("reviews.list.title")),
                     )
                     .child(div().flex_1())
                     .child(
                         Button::new("rv-refresh")
                             .ghost()
                             .icon(IconName::RefreshCcwDot)
-                            .tooltip("Refresh reviews")
+                            .tooltip(t!("reviews.list.refresh"))
                             .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
                     )
                     .child(
                         Button::new("rv-new")
                             .compact()
                             .label(if self.show_create {
-                                "Close draft"
+                                t!("reviews.list.close_draft")
                             } else {
-                                "New review"
+                                t!("reviews.list.new")
                             })
                             .on_click(cx.listener(|this, _, window, cx| {
                                 if this.show_create {
@@ -722,8 +734,9 @@ mod tests {
     fn rejects_invalid_pr_and_reports_incomplete_sha_length() {
         let sha = "0123456789abcdef0123456789abcdef01234567";
         assert!(review_request("0", sha, "", vec![]).is_err());
+        // 言語はプロセス共有なので切り替えず、現在の言語の文言と比べる。
         let error = review_request("42", "ABC123", "", vec![]).unwrap_err();
-        assert!(error.contains("6 characters entered"));
+        assert_eq!(error, i18n::t!("reviews.form.error.sha", count = 6));
         assert!(review_request("42", &sha.to_uppercase(), "", vec![]).is_err());
     }
 }
