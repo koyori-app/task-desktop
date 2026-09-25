@@ -1,0 +1,56 @@
+name: Desktop Windows build
+
+# 動作確認用に、署名なしの Windows 実行ファイルを作ってダウンロードできるようにする。
+# 配布用の MSIX（署名あり）は docs/releasing.md の手順で作る。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: desktop
+
+jobs:
+  build:
+    name: release build (windows x64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: desktop -> target
+          key: windows-release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # VC++ ランタイムを静的リンクし、ランタイム未導入の PC でもそのまま起動できるようにする。
+      - name: Build
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --locked --release -p app
+
+      - name: Collect
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item target/release/koyori.exe out/
+          $hash = (Get-FileHash out/koyori.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  koyori.exe" | Out-File -Encoding ascii out/SHA256SUMS
+
+      - name: Upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: koyori-windows-x64-${{ github.sha }}
+          path: desktop/out/
+          if-no-files-found: error
+          retention-days: 14
