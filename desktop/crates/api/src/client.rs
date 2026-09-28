@@ -97,6 +97,22 @@ impl Client {
     where
         T: DeserializeOwned,
     {
+        self.send_with(method, segments, query, body, true).await
+    }
+
+    /// `expire_on_401 = false` は、401 でもセッション切れとして扱わない
+    /// （Device Token を受け付けないセッション専用 API 向け）。
+    async fn send_with<T>(
+        &self,
+        method: Method,
+        segments: &[&str],
+        query: &[(String, String)],
+        body: Option<serde_json::Value>,
+        expire_on_401: bool,
+    ) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
         let url = self.url(segments)?;
         let mut req = self.http.request(method, url).query(query);
         if !self.token.is_empty() {
@@ -107,7 +123,7 @@ impl Client {
         }
         let resp = req.send().await?;
         let status = resp.status();
-        if status == StatusCode::UNAUTHORIZED {
+        if status == StatusCode::UNAUTHORIZED && expire_on_401 {
             self.unauthorized
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
@@ -260,9 +276,15 @@ impl Client {
 
     // ---- tenants / projects ----
 
+    /// GET /v1/auth/me — サーバはブラウザのセッション専用で、Device Token には 401 を返す。
+    /// この 401 はトークン切れではないので、セッション切れの印は立てない。
     pub async fn get_me(&self) -> Result<types::UserResponse> {
         let c = self.clone();
-        on_runtime(async move { c.send(Method::GET, &["v1", "auth", "me"], &[], None).await }).await
+        on_runtime(async move {
+            c.send_with(Method::GET, &["v1", "auth", "me"], &[], None, false)
+                .await
+        })
+        .await
     }
 
     pub async fn list_tenants(&self) -> Result<Vec<types::TenantListItemResponse>> {

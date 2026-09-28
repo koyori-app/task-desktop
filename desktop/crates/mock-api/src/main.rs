@@ -493,12 +493,21 @@ fn push_notification(
 
 // ---- handlers ----
 
-async fn get_me() -> Json<Value> {
+/// 本物のサーバと同じく、Bearer トークン（Device Token を含む）では 401 を返す。
+async fn get_me(headers: axum::http::HeaderMap) -> axum::response::Response {
+    if headers.contains_key("authorization") {
+        return err(
+            StatusCode::UNAUTHORIZED,
+            "このエンドポイントはセッション認証のみ対応しています",
+        )
+        .into_response();
+    }
     Json(
         json!({"id": USER_YUPIX, "username": "yupix", "email": "yupix@example.test",
         "email_verified": true, "is_admin": false, "is_suspended": false,
         "totp_enabled": true, "has_password": true, "avatar_url": null, "bio": "Mock account"}),
     )
+    .into_response()
 }
 
 async fn tenants() -> Json<Value> {
@@ -1529,7 +1538,12 @@ mod tests {
         let (client, server, _) = client().await;
         let tenant = TENANT.parse().unwrap();
         let project = PROJECT.parse().unwrap();
-        assert_eq!(client.get_me().await.unwrap().username, "yupix");
+        // /auth/me は Device Token を受け付けないが、セッション切れにはしない。
+        assert!(matches!(
+            client.get_me().await,
+            Err(api::ApiError::Unauthorized)
+        ));
+        assert!(!client.is_unauthorized());
         let tasks = client
             .list_tasks(tenant, project, &Default::default())
             .await
@@ -1826,7 +1840,7 @@ mod tests {
         let expired = api::Client::new(&base, "expired").unwrap();
         let clone = expired.clone();
         assert!(matches!(
-            expired.get_me().await,
+            expired.list_tenants().await,
             Err(api::ApiError::Unauthorized)
         ));
         assert!(clone.is_unauthorized());

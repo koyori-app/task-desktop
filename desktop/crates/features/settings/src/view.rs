@@ -194,6 +194,9 @@ impl SettingsView {
                 this.profile_loading = false;
                 match result {
                     Ok(profile) => this.profile = Some(profile),
+                    // Device Token では読めない（サーバ側がセッション専用）。
+                    // エラーにはせず「サインイン中」とだけ出す。
+                    Err(api::ApiError::Unauthorized) => {}
                     Err(error) => this.profile_error = Some(error.to_string().into()),
                 }
                 cx.notify();
