@@ -8,7 +8,7 @@
 "notify.deadline_soon" = { ja = "期限が近づいています", en = "Due date approaching" }
 "notify.round_created" = { ja = "レビューラウンドが作成されました", en = "Review round created" }
 "notify.round_created_findings" = { ja = "レビューラウンドが作成されました（指摘 {count} 件）", en = "Review round created ({count} findings)" }
-"notify.round_created_counts" = { ja = "レビューラウンドが作成されました（指摘 {count} 件・ブロッキング {blocking} 件）", en = "Review round created ({count} findings, {blocking} blocking)" }
+"notify.round_created_counts" = { ja = "レビューラウンドが作成されました（指摘 {count} 件・承認待ち {blocking} 件）", en = "Review round created ({count} findings, {blocking} awaiting approval)" }
 "notify.finding_fixed" = { ja = "レビュー指摘が修正されました", en = "Review finding fixed" }
 "notify.finding_reopened" = { ja = "指摘が再オープンされました", en = "Finding reopened" }
 "notify.finding_verified" = { ja = "指摘が確認されました", en = "Finding verified" }
