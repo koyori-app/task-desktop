@@ -10,7 +10,7 @@
 "list.untitled" = { ja = "無題のプルリクエスト", en = "Untitled pull request" }
 "list.unknown_author" = { ja = "作成者不明", en = "Unknown author" }
 "list.meta" = { ja = "{author} · {rounds} ラウンド · {time}", en = "{author} · {rounds} rounds · {time}" }
-"list.counts" = { ja = "未解決 {unresolved} · ブロッキング {blocking}", en = "{unresolved} unresolved · {blocking} blocking" }
+"list.counts" = { ja = "未解決 {unresolved} · 承認待ち {blocking}", en = "{unresolved} unresolved · {blocking} awaiting approval" }
 
 # レビュー作成フォーム
 "form.title" = { ja = "新しいレビューラウンド", en = "New review round" }
