@@ -96,6 +96,13 @@ fn main() {
                                 cx,
                             ))),
                             app_id: Some("app.koyori.desktop".into()),
+                            // macOS はタイトルバーを透明にし、信号ボタンをヘッダー（高さ 44）の中に置く。
+                            titlebar: Some(TitlebarOptions {
+                                title: Some("Koyori".into()),
+                                appears_transparent: cfg!(target_os = "macos"),
+                                traffic_light_position: cfg!(target_os = "macos")
+                                    .then(|| point(px(16.), px(16.))),
+                            }),
                             window_min_size: Some(size(px(960.), px(640.))),
                             ..Default::default()
                         },

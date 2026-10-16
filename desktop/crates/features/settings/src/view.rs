@@ -8,10 +8,12 @@ use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{Disableable, Icon, Selectable, Theme};
+use gpui_kit::component::{Disableable, Icon, Selectable, Sizable};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use i18n::t;
+
+mod workspace;
 
 /// app 層への通知。
 pub enum SettingsEvent {
@@ -21,6 +23,8 @@ pub enum SettingsEvent {
     LoggedOut,
     /// 設定画面を閉じて元の画面へ戻る。
     Close,
+    /// Workspace でテナント名などを変えた（Header の表示を合わせる）。
+    TenantUpdated { id: uuid::Uuid, name: String },
 }
 
 const KEY_PALETTE: &str = "command_palette";
@@ -57,6 +61,18 @@ pub struct SettingsView {
     devices_loading: bool,
     background_available: bool,
     section: Section,
+    inputs: workspace::Inputs,
+    profile_synced: bool,
+    profile_saving: bool,
+    tenant: Option<uuid::Uuid>,
+    tenant_info: Option<api::types::TenantResponse>,
+    tenant_error: Option<SharedString>,
+    tenant_synced: bool,
+    tenant_saving: bool,
+    members: Vec<api::types::TenantMemberResponse>,
+    members_error: Option<SharedString>,
+    workspace_loading: bool,
+    workspace_generation: u64,
 }
 
 impl EventEmitter<SettingsEvent> for SettingsView {}
@@ -105,6 +121,18 @@ impl SettingsView {
             devices_loading: client.is_some(),
             background_available: true,
             section: Section::General,
+            inputs: workspace::Inputs::new(window, cx),
+            profile_synced: false,
+            profile_saving: false,
+            tenant: None,
+            tenant_info: None,
+            tenant_error: None,
+            tenant_synced: false,
+            tenant_saving: false,
+            members: vec![],
+            members_error: None,
+            workspace_loading: false,
+            workspace_generation: 0,
         };
         if let Some(client) = client {
             this.refresh_devices(&client, cx);
@@ -120,9 +148,11 @@ impl SettingsView {
         self.profile_loading = true;
         self.profile = None;
         self.profile_error = None;
+        self.profile_synced = false;
         self.client = Some(client.clone());
         self.refresh_devices(&client, cx);
         self.refresh_profile(&client, cx);
+        self.reload_workspace(cx);
     }
 
     pub fn clear_client(&mut self, cx: &mut Context<Self>) {
@@ -134,6 +164,8 @@ impl SettingsView {
         self.profile_loading = false;
         self.profile_error = None;
         self.notice = None;
+        self.tenant = None;
+        self.reload_workspace(cx);
         cx.notify();
     }
 
@@ -193,7 +225,10 @@ impl SettingsView {
                 }
                 this.profile_loading = false;
                 match result {
-                    Ok(profile) => this.profile = Some(profile),
+                    Ok(profile) => {
+                        this.profile = Some(profile);
+                        this.profile_synced = false;
+                    }
                     Err(error) => this.profile_error = Some(error.to_string().into()),
                 }
                 cx.notify();
@@ -351,7 +386,7 @@ impl SettingsView {
         let owner = cx.entity().downgrade();
         let language = Button::new("language-select")
             .outline()
-            .compact()
+            .small()
             .dropdown_caret(true)
             .label(current.native_name())
             .dropdown_menu(move |mut menu, _, _| {
@@ -450,13 +485,9 @@ impl SettingsView {
                     c,
                     t!("settings.notifications.per_project"),
                     Some(t!("settings.notifications.per_project_desc")),
-                    Button::new("notif-web-link")
-                        .outline()
-                        .compact()
-                        .label(t!("settings.notifications.open_web"))
-                        .icon(Icon::new(IconName::ExternalLink))
-                        .disabled(true)
-                        .tooltip(t!("settings.notifications.open_web_unavailable"))
+                    Icon::new(IconName::FolderCog)
+                        .size_4()
+                        .text_color(c.text_muted)
                         .into_any_element(),
                 )],
             ),
@@ -487,7 +518,7 @@ impl SettingsView {
             choices = choices.child(
                 Button::new(SharedString::from(format!("appearance-{value:?}")))
                     .outline()
-                    .compact()
+                    .small()
                     .selected(current == value)
                     .icon(icon)
                     .label(label)
@@ -534,14 +565,14 @@ impl SettingsView {
                 .child(
                     Button::new("save-keybindings")
                         .primary()
-                        .compact()
+                        .small()
                         .label(t!("settings.keyboard.save"))
                         .on_click(cx.listener(|this, _, _, cx| this.save_keybindings(cx))),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(c.muted)
+                        .text_color(c.text_muted)
                         .child(t!("settings.keyboard.hint")),
                 )
                 .into_any_element(),
@@ -569,7 +600,7 @@ impl SettingsView {
                         .flex_shrink_0()
                         .rounded_full()
                         .bg(c.accent)
-                        .text_color(c.accent_fg)
+                        .text_color(c.accent_text)
                         .flex()
                         .items_center()
                         .justify_center()
@@ -590,10 +621,10 @@ impl SettingsView {
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(c.muted)
+                                .text_color(c.text_muted)
                                 .child(profile.email.clone()),
                         )
-                        .child(div().text_xs().text_color(c.muted).child(t!(
+                        .child(div().text_xs().text_color(c.text_muted).child(t!(
                             "settings.account.status",
                             email = if profile.email_verified {
                                 t!("settings.account.verified")
@@ -612,7 +643,7 @@ impl SettingsView {
             div()
                 .p_4()
                 .text_sm()
-                .text_color(c.muted)
+                .text_color(c.text_muted)
                 .child(if self.profile_loading {
                     t!("settings.account.loading")
                 } else if self.client.is_some() {
@@ -630,7 +661,7 @@ impl SettingsView {
                 Some(error.as_ref()),
                 Button::new("reload-account")
                     .outline()
-                    .compact()
+                    .small()
                     .label(t!("settings.account.retry"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(client) = this.client.clone() {
@@ -644,6 +675,10 @@ impl SettingsView {
             ));
         }
         out.push(group(c, profile_rows));
+        if let Some(form) = self.profile_form(c, cx) {
+            out.push(group_title(c, t!("settings.account.profile")));
+            out.push(form);
+        }
 
         out.push(group_title(c, t!("settings.account.devices")));
         let own_device_id = self.own_device_id();
@@ -673,7 +708,7 @@ impl SettingsView {
                     )),
                     Button::new(SharedString::from(format!("revoke-{id}")))
                         .outline()
-                        .compact()
+                        .small()
                         .label(if own {
                             t!("settings.account.logout")
                         } else {
@@ -693,7 +728,7 @@ impl SettingsView {
                     div()
                         .p_4()
                         .text_sm()
-                        .text_color(c.muted)
+                        .text_color(c.text_muted)
                         .child(if self.devices_loading {
                             t!("settings.account.loading_devices")
                         } else {
@@ -714,7 +749,7 @@ impl SettingsView {
                 Some(t!("settings.account.logout_desc")),
                 Button::new("logout")
                     .danger()
-                    .compact()
+                    .small()
                     .disabled(self.client.is_none())
                     .label(t!("settings.account.logout"))
                     .icon(Icon::new(IconName::LogOut))
@@ -734,43 +769,15 @@ fn key_or(settings: &core::Settings, key: &str, default: &str) -> String {
         .unwrap_or_else(|| default.into())
 }
 
-/// render で使う色。
-struct Colors {
-    muted: Hsla,
-    border: Hsla,
-    surface: Hsla,
-    hover: Hsla,
-    accent: Hsla,
-    accent_fg: Hsla,
-}
+use ::ui::Colors;
 
 /// 項目をまとめるカード。行の間に区切り線を入れる。
 fn group(c: &Colors, rows: Vec<AnyElement>) -> AnyElement {
-    div()
-        .flex()
-        .flex_col()
-        .flex_shrink_0()
-        .w_full()
-        .rounded_lg()
-        .border_1()
-        .border_color(c.border)
-        .bg(c.surface)
-        .children(rows.into_iter().enumerate().map(|(ix, row)| {
-            div()
-                .when(ix > 0, |d| d.border_t_1().border_color(c.border))
-                .child(row)
-        }))
-        .into_any_element()
+    ::ui::card(c, rows).into_any_element()
 }
 
 fn group_title(c: &Colors, title: &'static str) -> AnyElement {
-    div()
-        .pt_2()
-        .text_sm()
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(c.muted)
-        .child(title)
-        .into_any_element()
+    ::ui::section_heading(c, title).pt_2().into_any_element()
 }
 
 /// 左に名前と説明、右に操作部品を置く 1 行。
@@ -810,7 +817,7 @@ fn row_owned(
                 .gap_0p5()
                 .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(title))
                 .when_some(description, |d, text| {
-                    d.child(div().text_xs().text_color(c.muted).child(text))
+                    d.child(div().text_xs().text_color(c.text_muted).child(text))
                 }),
         )
         .child(div().flex_shrink_0().child(control))
@@ -818,25 +825,16 @@ fn row_owned(
 }
 
 impl Render for SettingsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = {
-            let t = Theme::global(cx);
-            let tokens = t.semantic_tokens().colors;
-            Colors {
-                muted: t.muted_foreground,
-                border: t.border,
-                surface: tokens.background,
-                hover: t.secondary,
-                accent: t.primary,
-                accent_fg: t.primary_foreground,
-            }
-        };
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_inputs(window, cx);
+        let colors = ::ui::colors(cx);
         let section = self.section;
         let body = match section {
             Section::General => self.general_page(&colors, cx),
             Section::Notifications => self.notifications_page(&colors, cx),
             Section::Appearance => self.appearance_page(&colors, cx),
             Section::Keyboard => self.keyboard_page(&colors, cx),
+            Section::Workspace => self.workspace_page(&colors, cx),
             Section::Account => self.account_page(&colors, cx),
         };
 
@@ -846,15 +844,16 @@ impl Render for SettingsView {
             .flex_shrink_0()
             .flex()
             .flex_col()
-            .gap_1()
-            .p_3()
+            .gap_0p5()
+            .p_2()
+            .bg(colors.sidebar)
             .border_r_1()
             .border_color(colors.border)
             .child(
                 div().flex().pb_2().child(
                     Button::new("settings-back")
                         .ghost()
-                        .compact()
+                        .small()
                         .icon(IconName::ArrowLeft)
                         .label(t!("settings.back"))
                         .tooltip(t!("settings.back_tooltip"))
@@ -864,36 +863,24 @@ impl Render for SettingsView {
             .child(
                 div()
                     .px_2()
-                    .pb_2()
-                    .text_lg()
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .pb_1()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(colors.text_muted)
                     .child(t!("settings.title")),
             )
             .children(Section::ALL.into_iter().map(|item| {
-                let active = item == section;
-                div()
-                    .id(SharedString::from(format!("settings-nav-{item:?}")))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .px_2()
-                    .py_1p5()
-                    .rounded_md()
-                    .text_sm()
-                    .cursor_pointer()
-                    .when(active, |d| {
-                        d.bg(colors.hover).font_weight(FontWeight::MEDIUM)
-                    })
-                    .when(!active, |d| {
-                        d.text_color(colors.muted).hover(|d| d.bg(colors.hover))
-                    })
-                    .child(Icon::new(item.icon()).size_4())
-                    .child(item.label())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.section = item;
-                        cx.notify();
-                    }))
+                ::ui::nav_item(
+                    &colors,
+                    SharedString::from(format!("settings-nav-{item:?}")),
+                    Icon::new(item.icon()).small(),
+                    item.label(),
+                    item == section,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.section = item;
+                    cx.notify();
+                }))
             }));
 
         let content = div()
@@ -909,12 +896,12 @@ impl Render for SettingsView {
                     .flex()
                     .flex_col()
                     .gap_3()
-                    .px_8()
-                    .py_6()
+                    .px_6()
+                    .py_5()
                     .child(
                         div()
-                            .pb_2()
-                            .text_xl()
+                            .pb_1()
+                            .text_lg()
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(section.label()),
                     )
@@ -952,15 +939,17 @@ enum Section {
     Notifications,
     Appearance,
     Keyboard,
+    Workspace,
     Account,
 }
 
 impl Section {
-    const ALL: [Section; 5] = [
+    const ALL: [Section; 6] = [
         Section::General,
         Section::Notifications,
         Section::Appearance,
         Section::Keyboard,
+        Section::Workspace,
         Section::Account,
     ];
 
@@ -970,6 +959,7 @@ impl Section {
             Section::Notifications => t!("settings.section.notifications"),
             Section::Appearance => t!("settings.section.appearance"),
             Section::Keyboard => t!("settings.section.keyboard"),
+            Section::Workspace => t!("settings.section.workspace"),
             Section::Account => t!("settings.section.account"),
         }
     }
@@ -980,6 +970,7 @@ impl Section {
             Section::Notifications => IconName::Bell,
             Section::Appearance => IconName::Palette,
             Section::Keyboard => IconName::SquareTerminal,
+            Section::Workspace => IconName::Building2,
             Section::Account => IconName::CircleUser,
         }
     }

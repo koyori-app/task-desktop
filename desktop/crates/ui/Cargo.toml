@@ -1,0 +1,7 @@
+[package]
+name = "ui"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui-kit.workspace = true

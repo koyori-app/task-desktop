@@ -11,7 +11,7 @@ use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::list::{List, ListDelegate, ListEvent, ListItem, ListState};
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::{Disableable, Selectable, Theme, WindowExt};
+use gpui_kit::component::{Disableable, Icon, Selectable, Sizable, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use i18n::t;
@@ -55,6 +55,8 @@ fn review_request(
 struct PullRequestRows {
     rows: Vec<ReviewedPullRequest>,
     loading: bool,
+    /// 絞り込みで 0 件になった（「レビューが無い」と区別して出す）。
+    filtered: bool,
 }
 impl ListDelegate for PullRequestRows {
     type Item = ListItem;
@@ -76,11 +78,20 @@ impl ListDelegate for PullRequestRows {
         _: &mut Window,
         cx: &mut Context<ListState<Self>>,
     ) -> impl IntoElement {
-        div()
-            .p_4()
-            .text_sm()
-            .text_color(Theme::global(cx).semantic_tokens().colors.muted_foreground)
-            .child(t!("reviews.list.empty"))
+        ::ui::empty_state(
+            &::ui::colors(cx),
+            if self.filtered {
+                IconName::SearchX
+            } else {
+                IconName::GitPullRequest
+            },
+            if self.filtered {
+                t!("reviews.list.no_match")
+            } else {
+                t!("reviews.list.empty")
+            },
+            None,
+        )
     }
     fn render_item(
         &mut self,
@@ -89,10 +100,9 @@ impl ListDelegate for PullRequestRows {
         cx: &mut Context<ListState<Self>>,
     ) -> Option<ListItem> {
         let pr = self.rows.get(ix.row)?;
-        let t = Theme::global(cx);
-        let c = t.semantic_tokens().colors;
+        let c = ::ui::colors(cx);
         Some(
-            ListItem::new(("pr-row", ix.row)).h(px(90.)).w_full().child(
+            ListItem::new(("pr-row", ix.row)).py_2().w_full().child(
                 div()
                     .flex()
                     .flex_col()
@@ -101,45 +111,67 @@ impl ListDelegate for PullRequestRows {
                     .min_w_0()
                     .child(
                         div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .min_w_0()
                             .text_sm()
-                            .text_ellipsis()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(format!(
-                                "#{} · {}",
-                                pr.pr_number,
-                                pr.pr_title
-                                    .as_deref()
-                                    .unwrap_or(t!("reviews.list.untitled"))
-                            )),
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_color(c.text_muted)
+                                    .child(format!("#{}", pr.pr_number)),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(
+                                        pr.pr_title
+                                            .clone()
+                                            .unwrap_or_else(|| t!("reviews.list.untitled").into()),
+                                    ),
+                            ),
                     )
                     .child(
                         div()
-                            .text_xs()
-                            .text_color(c.muted_foreground)
-                            .text_ellipsis()
-                            .child(t!(
-                                "reviews.list.meta",
-                                author = pr
-                                    .pr_author
-                                    .as_deref()
-                                    .unwrap_or(t!("reviews.list.unknown_author")),
-                                rounds = pr.rounds,
-                                time = pr.last_reviewed_at.format("%Y-%m-%d %H:%M")
-                            )),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(if pr.blocking > 0 {
-                                t.danger
-                            } else {
-                                c.muted_foreground
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_xs()
+                                    .text_color(c.text_muted)
+                                    .child(t!(
+                                        "reviews.list.meta",
+                                        author = pr
+                                            .pr_author
+                                            .as_deref()
+                                            .unwrap_or(t!("reviews.list.unknown_author")),
+                                        rounds = pr.rounds,
+                                        time = pr.last_reviewed_at.format("%Y-%m-%d %H:%M")
+                                    )),
+                            )
+                            .when(pr.blocking > 0, |d| {
+                                d.child(::ui::badge(
+                                    &c,
+                                    t!("reviews.list.blocking_badge", count = pr.blocking),
+                                    Some(c.danger),
+                                ))
                             })
-                            .child(t!(
-                                "reviews.list.counts",
-                                unresolved = pr.unresolved,
-                                blocking = pr.blocking
-                            )),
+                            .when(pr.unresolved > 0, |d| {
+                                d.child(::ui::badge(
+                                    &c,
+                                    t!("reviews.list.unresolved_badge", count = pr.unresolved),
+                                    Some(c.warning),
+                                ))
+                            }),
                     ),
             ),
         )
@@ -174,7 +206,35 @@ pub struct ReviewListView {
     selected: Option<usize>,
     generation: u64,
     context_generation: u64,
+    search_input: Entity<InputState>,
+    unresolved_only: bool,
 }
+
+/// 検索語（番号・タイトル・作成者）と「未解決のみ」で絞る。
+fn filter_prs(
+    prs: &[ReviewedPullRequest],
+    query: &str,
+    unresolved_only: bool,
+) -> Vec<ReviewedPullRequest> {
+    let query = query.trim().trim_start_matches('#').to_lowercase();
+    prs.iter()
+        .filter(|pr| !unresolved_only || pr.unresolved > 0)
+        .filter(|pr| {
+            query.is_empty()
+                || pr.pr_number.to_string().starts_with(&query)
+                || pr
+                    .pr_title
+                    .as_deref()
+                    .is_some_and(|t| t.to_lowercase().contains(&query))
+                || pr
+                    .pr_author
+                    .as_deref()
+                    .is_some_and(|a| a.to_lowercase().contains(&query))
+        })
+        .cloned()
+        .collect()
+}
+
 impl ReviewListView {
     pub fn new(
         client: Option<Client>,
@@ -187,6 +247,7 @@ impl ReviewListView {
                 PullRequestRows {
                     rows: vec![],
                     loading: false,
+                    filtered: false,
                 },
                 window,
                 cx,
@@ -196,7 +257,7 @@ impl ReviewListView {
         let sub = cx.subscribe(&list_state, |this, _, event: &ListEvent, cx| {
             if let ListEvent::Select(ix) | ListEvent::Confirm(ix) = event {
                 this.selected = Some(ix.row);
-                if let Some(pr) = this.prs.get(ix.row) {
+                if let Some(pr) = this.visible_prs(cx).get(ix.row) {
                     cx.emit(ReviewListEvent::Select {
                         pr: pr.pr_number as i64,
                         title: pr.pr_title.clone(),
@@ -253,7 +314,19 @@ impl ReviewListView {
             selected: None,
             generation: 0,
             context_generation: 0,
+            search_input: cx.new(|cx| {
+                InputState::new(window, cx).placeholder(t!("reviews.list.search_placeholder"))
+            }),
+            unresolved_only: false,
         };
+        this._subs.push(
+            cx.subscribe(&this.search_input, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.selected = None;
+                    cx.notify();
+                }
+            }),
+        );
         for input in [
             &this.pr_input,
             &this.sha_input,
@@ -322,6 +395,14 @@ impl ReviewListView {
         self.pr_input.update(cx, |s, cx| s.focus(window, cx));
         cx.notify();
     }
+    fn visible_prs(&self, cx: &App) -> Vec<ReviewedPullRequest> {
+        filter_prs(
+            &self.prs,
+            &self.search_input.read(cx).value(),
+            self.unresolved_only,
+        )
+    }
+
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         let (Some(client), Some(tenant), Some(project)) =
             (self.client.clone(), self.tenant, self.project)
@@ -497,8 +578,8 @@ impl Render for ReviewListView {
                 window.push_notification(Notification::new().message(e.clone()), cx);
             }
         }
-        let t = Theme::global(cx).clone();
-        let c = t.semantic_tokens().colors;
+        let t = ::ui::colors(cx);
+        let c = t;
         let mut severity_row = div().flex().flex_wrap().gap_1();
         for severity in [
             FindingSeverity::High,
@@ -508,7 +589,7 @@ impl Render for ReviewListView {
         ] {
             severity_row = severity_row.child(
                 Button::new(SharedString::from(format!("severity-{severity}")))
-                    .compact()
+                    .small()
                     .selected(self.severity == severity)
                     .disabled(self.submitting)
                     .label(severity_label(severity))
@@ -541,7 +622,7 @@ impl Render for ReviewListView {
                     .disabled(self.submitting)
                     .id("review-sha"),
             )
-            .child(div().text_xs().text_color(c.muted_foreground).child(t!(
+            .child(div().text_xs().text_color(c.text_muted).child(t!(
                 "reviews.form.sha_count",
                 count = self.sha_input.read(cx).value().trim().chars().count()
             )))
@@ -563,7 +644,7 @@ impl Render for ReviewListView {
             .child(
                 div()
                     .text_xs()
-                    .text_color(c.muted_foreground)
+                    .text_color(c.text_muted)
                     .child(t!("reviews.form.drafts_heading")),
             )
             .children(self.drafts.iter().enumerate().map(|(ix, f)| {
@@ -579,7 +660,7 @@ impl Render for ReviewListView {
                     .child(
                         Button::new(("remove-draft", ix))
                             .disabled(self.submitting)
-                            .compact()
+                            .small()
                             .ghost()
                             .label(t!("reviews.form.remove"))
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -613,12 +694,14 @@ impl Render for ReviewListView {
             )
             .child(
                 Button::new("add-finding")
+                    .small()
                     .label(t!("reviews.form.add_finding"))
                     .disabled(self.submitting)
                     .on_click(cx.listener(|this, _, _, cx| this.add_finding(cx))),
             )
             .child(
                 Button::new("submit-review")
+                    .small()
                     .primary()
                     .label(if self.submitting {
                         t!("reviews.form.submitting").into()
@@ -628,8 +711,11 @@ impl Render for ReviewListView {
                     .disabled(self.submitting)
                     .on_click(cx.listener(|this, _, _, cx| this.create_review(cx))),
             );
+        let visible = self.visible_prs(cx);
+        let filtered = visible.len() != self.prs.len();
         self.list_state.update(cx, |state, cx| {
-            state.delegate_mut().rows = self.prs.clone();
+            state.delegate_mut().rows = visible;
+            state.delegate_mut().filtered = filtered;
             state.delegate_mut().loading = self.loading;
             state.set_selected_index(self.selected.map(IndexPath::new), window, cx);
             cx.notify();
@@ -642,7 +728,12 @@ impl Render for ReviewListView {
                 .child(form)
                 .into_any_element()
         } else {
-            List::new(&self.list_state).into_any_element()
+            div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .child(div().flex_1().min_h_0().child(List::new(&self.list_state)))
+                .into_any_element()
         };
         div()
             .id("review-list-view")
@@ -652,33 +743,43 @@ impl Render for ReviewListView {
             .min_w_0()
             .min_h_0()
             .child(
-                div()
-                    .flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .flex_wrap()
-                    .gap_2()
-                    .px_4()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(c.border)
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(t!("reviews.list.title")),
-                    )
-                    .child(div().flex_1())
+                ::ui::toolbar(&::ui::colors(cx))
+                    .when(!self.show_create, |d| {
+                        d.child(
+                            div().flex_1().min_w_0().child(
+                                Input::new(&self.search_input)
+                                    .id("review-search")
+                                    .small()
+                                    .prefix(Icon::new(IconName::Search).small())
+                                    .cleanable(true),
+                            ),
+                        )
+                        .child(
+                            Button::new("rv-unresolved")
+                                .small()
+                                .ghost()
+                                .selected(self.unresolved_only)
+                                .label(t!("reviews.list.unresolved_only"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.unresolved_only = !this.unresolved_only;
+                                    this.selected = None;
+                                    cx.notify();
+                                })),
+                        )
+                    })
+                    .when(self.show_create, |d| d.child(div().flex_1()))
                     .child(
                         Button::new("rv-refresh")
                             .ghost()
-                            .icon(IconName::RefreshCcwDot)
+                            .small()
+                            .icon(IconName::RefreshCw)
                             .tooltip(t!("reviews.list.refresh"))
                             .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
                     )
                     .child(
                         Button::new("rv-new")
-                            .compact()
+                            .small()
+                            .when(!self.show_create, |b| b.icon(IconName::Plus))
                             .label(if self.show_create {
                                 t!("reviews.list.close_draft")
                             } else {
@@ -710,6 +811,32 @@ impl Render for ReviewListView {
                     .min_h_0()
                     .child(content),
             )
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::filter_prs;
+    use api::types::ReviewedPullRequest;
+
+    fn pr(number: i64, title: &str, unresolved: i64) -> ReviewedPullRequest {
+        serde_json::from_value(serde_json::json!({
+            "pr_number": number, "pr_title": title, "pr_author": "alice", "rounds": 1,
+            "unresolved": unresolved, "blocking": 0, "last_reviewed_at": "2026-09-01T00:00:00Z",
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn filters_by_number_title_author_and_unresolved() {
+        let prs = vec![pr(42, "Add login", 2), pr(7, "Fix typo", 0)];
+        let numbers =
+            |v: Vec<ReviewedPullRequest>| v.iter().map(|p| p.pr_number).collect::<Vec<_>>();
+        assert_eq!(numbers(filter_prs(&prs, "", false)), vec![42, 7]);
+        assert_eq!(numbers(filter_prs(&prs, "#4", false)), vec![42]);
+        assert_eq!(numbers(filter_prs(&prs, "TYPO", false)), vec![7]);
+        assert_eq!(numbers(filter_prs(&prs, "alice", true)), vec![42]);
+        assert!(filter_prs(&prs, "nothing", false).is_empty());
     }
 }
 

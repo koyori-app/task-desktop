@@ -45,7 +45,7 @@
 "detail.status" = { ja = "ステータス", en = "Status" }
 "detail.priority" = { ja = "優先度", en = "Priority" }
 "detail.assignees" = { ja = "担当者", en = "Assignees" }
-"detail.due" = { ja = "期限", en = "Due" }
+"detail.due" = { ja = "目標日", en = "Target date" }
 "detail.due_placeholder" = { ja = "期限なし", en = "No due date" }
 "detail.due_today" = { ja = "今日", en = "Today" }
 "detail.due_tomorrow" = { ja = "明日", en = "Tomorrow" }
@@ -97,3 +97,139 @@
 "list.comment_send" = { ja = "送信", en = "Send" }
 "list.comment_close" = { ja = "閉じる", en = "Close" }
 "list.comment_posted" = { ja = "コメントを追加しました", en = "Comment added" }
+
+# ---- 詳細（ヘッダー操作・プロパティ・タブ） ----
+"detail.actions" = { ja = "その他の操作", en = "More actions" }
+"detail.watch" = { ja = "ウォッチする", en = "Watch" }
+"detail.watch_short" = { ja = "ウォッチ", en = "Watch" }
+"detail.watching" = { ja = "ウォッチ中", en = "Watching" }
+"detail.more_props" = { ja = "他のプロパティ（{count}）", en = "More properties ({count})" }
+"detail.fewer_props" = { ja = "閉じる", en = "Show less" }
+"detail.show_meta" = { ja = "作成日時など", en = "Created and updated" }
+"detail.unwatch" = { ja = "ウォッチをやめる", en = "Unwatch" }
+"detail.watchers_tooltip" = { ja = "{action}（ウォッチ中: {names}）", en = "{action} (watching: {names})" }
+"detail.watching_now" = { ja = "このタスクをウォッチしています", en = "You are now watching this task" }
+"detail.unwatched" = { ja = "ウォッチをやめました", en = "You stopped watching this task" }
+"detail.archive" = { ja = "アーカイブ", en = "Archive" }
+"detail.unarchive" = { ja = "アーカイブを解除", en = "Unarchive" }
+"detail.archived_badge" = { ja = "アーカイブ済み", en = "Archived" }
+"detail.archived_notice" = { ja = "タスクをアーカイブしました。一覧の「アーカイブ済みを表示」から戻せます。", en = "Task archived. Use “Show archived” in the list to restore it." }
+"detail.unarchived" = { ja = "アーカイブを解除しました", en = "Task restored from the archive" }
+"detail.delete" = { ja = "削除", en = "Delete" }
+"detail.delete_title" = { ja = "タスクを削除しますか？", en = "Delete this task?" }
+"detail.delete_confirm" = { ja = "「{name}」を削除します。サブタスクやコメントも見えなくなります。", en = "“{name}” will be deleted, along with access to its subtasks and comments." }
+"detail.deleted" = { ja = "タスクを削除しました", en = "Task deleted" }
+"detail.save" = { ja = "保存", en = "Save" }
+"detail.none" = { ja = "なし", en = "None" }
+"detail.hard_due" = { ja = "最終期限", en = "Final deadline" }
+"detail.labels" = { ja = "ラベル", en = "Labels" }
+"detail.edit_labels" = { ja = "ラベルを編集", en = "Edit labels" }
+"detail.milestone" = { ja = "マイルストーン", en = "Milestone" }
+"detail.sprint" = { ja = "スプリント", en = "Sprint" }
+"detail.estimate" = { ja = "見積", en = "Estimate" }
+"detail.estimate_placeholder" = { ja = "例: 1h30m", en = "e.g. 1h30m" }
+"detail.progress" = { ja = "進捗", en = "Progress" }
+"detail.parent" = { ja = "親タスク", en = "Parent" }
+"detail.parent_task" = { ja = "親タスクを開く", en = "Open parent task" }
+"detail.clear_parent" = { ja = "親タスクから外す", en = "Detach from parent" }
+"detail.field_placeholder" = { ja = "値を入力して Enter", en = "Type a value and press Enter" }
+"detail.created_by" = { ja = "作成者 {name}", en = "Created by {name}" }
+"detail.created_at" = { ja = "作成 {at}", en = "Created {at}" }
+"detail.updated_at" = { ja = "更新 {at}", en = "Updated {at}" }
+"detail.completed_at" = { ja = "完了 {at}", en = "Completed {at}" }
+"detail.invalid_minutes" = { ja = "時間は 90、1h30m、45m のように入力してください", en = "Enter a duration like 90, 1h30m or 45m" }
+"detail.invalid_progress" = { ja = "進捗は 0〜100 の整数で入力してください", en = "Progress must be a whole number from 0 to 100" }
+"detail.invalid_date" = { ja = "日付は YYYY-MM-DD で入力してください", en = "Enter the date as YYYY-MM-DD" }
+"detail.tab_comments" = { ja = "コメント", en = "Comments" }
+"detail.tab_subtasks" = { ja = "サブタスク", en = "Subtasks" }
+"detail.tab_relations" = { ja = "依存関係", en = "Dependencies" }
+"detail.tab_activity" = { ja = "履歴", en = "Activity" }
+"detail.tab_time" = { ja = "作業時間", en = "Time" }
+"detail.tab_files" = { ja = "添付", en = "Files" }
+"detail.no_comments" = { ja = "まだコメントはありません", en = "No comments yet" }
+"detail.comment_hint" = { ja = "Ctrl+Enter（macOS は ⌘+Enter）で投稿。Markdown が使えます。", en = "Ctrl+Enter (⌘+Enter on macOS) to post. Markdown supported." }
+"detail.reply" = { ja = "返信", en = "Reply" }
+"detail.replying_to" = { ja = "{name} さんへの返信", en = "Replying to {name}" }
+"detail.edited" = { ja = "（編集済み）", en = "(edited)" }
+"detail.delete_comment_title" = { ja = "コメントを削除しますか？", en = "Delete this comment?" }
+"detail.delete_comment_confirm" = { ja = "削除したコメントは「削除されたコメント」と表示されます。", en = "The comment will be shown as “Deleted comment”." }
+"detail.subtask_placeholder" = { ja = "サブタスクを追加…", en = "Add a subtask…" }
+"detail.subtasks_done" = { ja = "{done} / {total} 完了", en = "{done} of {total} done" }
+"detail.blocked_by" = { ja = "このタスクを止めているタスク", en = "Blocked by" }
+"detail.blocks" = { ja = "このタスクが止めているタスク", en = "Blocking" }
+"detail.add_relation" = { ja = "依存関係を追加", en = "Add a dependency" }
+"detail.kind_blocked_by" = { ja = "次に止められている", en = "Is blocked by" }
+"detail.kind_blocks" = { ja = "次を止めている", en = "Blocks" }
+"detail.relation_search" = { ja = "タスクを検索…", en = "Search tasks…" }
+"detail.remove_relation" = { ja = "依存関係を外す", en = "Remove dependency" }
+"detail.no_activity" = { ja = "履歴はありません", en = "No activity yet" }
+"detail.system" = { ja = "システム", en = "System" }
+"detail.timer_start" = { ja = "タイマー開始", en = "Start timer" }
+"detail.timer_stop" = { ja = "停止して記録", en = "Stop and log" }
+"detail.timer_started" = { ja = "タイマーを開始しました", en = "Timer started" }
+"detail.timer_stopped" = { ja = "タイマーを止めて作業時間を記録しました", en = "Timer stopped and time logged" }
+"detail.timer_running" = { ja = "計測中", en = "Timer running" }
+"detail.timer_just_started" = { ja = "計測を始めたところです", en = "Just started" }
+"detail.timer_elapsed" = { ja = "{since} から {time} 経過", en = "{time} since {since}" }
+"detail.time_actual" = { ja = "実績 {time}", en = "Logged {time}" }
+"detail.time_estimate" = { ja = "見積 {time}", en = "Estimate {time}" }
+"detail.time_remaining" = { ja = "残り {time}", en = "Remaining {time}" }
+"detail.time_over" = { ja = "見積超過", en = "Over estimate" }
+"detail.add_log" = { ja = "作業時間を記録", en = "Log time" }
+"detail.log_minutes_placeholder" = { ja = "例: 45m", en = "e.g. 45m" }
+"detail.log_note_placeholder" = { ja = "メモ（任意）", en = "Note (optional)" }
+"detail.no_logs" = { ja = "作業時間の記録はありません", en = "No time logged yet" }
+"detail.delete_log_title" = { ja = "作業時間の記録を削除しますか？", en = "Delete this time entry?" }
+"detail.delete_log_confirm" = { ja = "この記録は集計から外れます。", en = "It will no longer count toward the total." }
+"detail.no_files" = { ja = "添付ファイルはありません", en = "No attachments" }
+"detail.files_hint" = { ja = "クリックでブラウザで開きます。ファイルの追加は Web から行えます。", en = "Click to open in your browser. Add files from the web app." }
+"detail.detach" = { ja = "添付を外す", en = "Detach" }
+"detail.detach_title" = { ja = "添付を外しますか？", en = "Detach this file?" }
+"detail.detach_confirm" = { ja = "「{name}」をこのタスクから外します。ドライブのファイルは残ります。", en = "“{name}” will be removed from this task. The file stays in the drive." }
+"sprint.planning" = { ja = "計画中", en = "Planning" }
+"sprint.active" = { ja = "進行中", en = "Active" }
+"sprint.completed" = { ja = "完了", en = "Completed" }
+
+# ---- 履歴（Web の task-activity.ts と同じ文言） ----
+"activity.created" = { ja = "タスクを作成しました", en = "created the task" }
+"activity.github_imported" = { ja = "{source} からタスクを作成しました", en = "created the task from {source}" }
+"activity.github_synced" = { ja = "{source} からタスクを同期しました", en = "synced the task from {source}" }
+"activity.status" = { ja = "ステータスを変更しました", en = "changed the status" }
+"activity.status_to" = { ja = "ステータスを {to} に変更しました", en = "changed the status to {to}" }
+"activity.priority" = { ja = "優先度を変更しました", en = "changed the priority" }
+"activity.priority_to" = { ja = "優先度を {to} に変更しました", en = "changed the priority to {to}" }
+"activity.deadline" = { ja = "期限", en = "due date" }
+"activity.hard_deadline" = { ja = "ハード期限", en = "hard deadline" }
+"activity.deadline_to" = { ja = "{field}を {to} に変更しました", en = "set the {field} to {to}" }
+"activity.deadline_cleared" = { ja = "{field}を外しました", en = "cleared the {field}" }
+"activity.assignee_added" = { ja = "担当者を追加しました", en = "added an assignee" }
+"activity.assignee_removed" = { ja = "担当者を外しました", en = "removed an assignee" }
+"activity.relation_added" = { ja = "関連タスクを追加しました", en = "added a related task" }
+"activity.relation_removed" = { ja = "関連タスクを外しました", en = "removed a related task" }
+"activity.comment_added" = { ja = "コメントしました", en = "commented" }
+"activity.comment_edited" = { ja = "コメントを編集しました", en = "edited a comment" }
+"activity.comment_deleted" = { ja = "コメントを削除しました", en = "deleted a comment" }
+"activity.archived" = { ja = "タスクをアーカイブしました", en = "archived the task" }
+"activity.commit" = { ja = "コミット {sha} を関連付けました: {message}", en = "linked commit {sha}: {message}" }
+"activity.unknown" = { ja = "操作しました", en = "made a change" }
+
+# ---- 一覧（検索・絞り込み・一括操作） ----
+"list.search_placeholder" = { ja = "タスクを検索…", en = "Search tasks…" }
+"list.search_results" = { ja = "検索結果", en = "Search results" }
+"list.search_empty" = { ja = "一致するタスクはありません", en = "No matching tasks" }
+"list.filter_all" = { ja = "すべて", en = "All" }
+"list.filter_clear" = { ja = "絞り込みを解除", en = "Clear filters" }
+"list.filter" = { ja = "絞り込み", en = "Filter" }
+"list.filter_count" = { ja = "絞り込み {count}", en = "Filter {count}" }
+"list.filter_remove" = { ja = "この条件を外す", en = "Remove this filter" }
+"list.filter_empty" = { ja = "条件に合うタスクはありません", en = "No tasks match these filters" }
+"list.show_archived" = { ja = "アーカイブ済みを表示", en = "Show archived" }
+"list.bulk_selected" = { ja = "{count} 件を選択中", en = "{count} selected" }
+"list.bulk_assign" = { ja = "担当者を追加", en = "Assign" }
+"list.bulk_add_label" = { ja = "ラベルを付ける", en = "Add label" }
+"list.bulk_remove_label" = { ja = "ラベルを外す", en = "Remove label" }
+"list.bulk_clear_sprint" = { ja = "スプリントから外す", en = "Remove from sprint" }
+"list.bulk_clear" = { ja = "選択を解除", en = "Clear selection" }
+"list.bulk_hint" = { ja = "一括操作の対象にする（Ctrl/⌘+クリック、x キーでも切り替え）", en = "Select for bulk edit (also Ctrl/⌘+click or the x key)" }
+"list.bulk_done" = { ja = "{count} 件を更新しました", en = "Updated {count} tasks" }
+"list.bulk_partial" = { ja = "{updated} 件を更新、{failed} 件は更新できませんでした（{reasons}）。失敗したタスクを選択に残しています。", en = "Updated {updated}; {failed} could not be updated ({reasons}). The failed tasks are still selected." }

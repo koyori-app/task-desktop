@@ -30,7 +30,7 @@
 "notifications.due" = { ja = "期限", en = "Due dates" }
 "notifications.due_desc" = { ja = "期限が近づいたタスク。", en = "Tasks that are about to reach their due date." }
 "notifications.per_project" = { ja = "プロジェクトごとの設定", en = "Per-project settings" }
-"notifications.per_project_desc" = { ja = "プロジェクトごとに記録するイベントは Web で管理します。", en = "Which events are recorded for each project is managed on the web." }
+"notifications.per_project_desc" = { ja = "プロジェクトごとに受け取る通知は、各プロジェクトの「設定 → 通知」で変更できます。", en = "Choose which events each project notifies you about under the project's Settings → Notifications." }
 "notifications.open_web" = { ja = "Web で開く", en = "Open on web" }
 "notifications.open_web_unavailable" = { ja = "プロジェクトの通知設定はまだ Web で提供されていません", en = "Project notification settings are not available on the website yet" }
 
@@ -69,3 +69,48 @@
 "account.no_devices" = { ja = "デバイスはありません", en = "No devices" }
 "account.logout" = { ja = "ログアウト", en = "Log out" }
 "account.logout_desc" = { ja = "このコンピューターの Koyori からサインアウトし、デバイストークンを取り消します。", en = "Sign out of Koyori on this computer and revoke its device token." }
+
+"section.workspace" = { ja = "ワークスペース", en = "Workspace" }
+"account.profile" = { ja = "プロフィール", en = "Profile" }
+"account.username" = { ja = "ユーザー名", en = "Username" }
+"account.username_placeholder" = { ja = "ユーザー名", en = "Username" }
+"account.username_required" = { ja = "ユーザー名を入力してください", en = "Enter a username" }
+"account.bio" = { ja = "自己紹介", en = "Bio" }
+"account.bio_placeholder" = { ja = "ひとこと（任意）", en = "A short bio (optional)" }
+"account.avatar" = { ja = "アイコン画像の URL", en = "Avatar image URL" }
+"account.avatar_desc" = { ja = "空にするとアイコンを外します。", en = "Leave empty to remove the avatar." }
+"account.avatar_placeholder" = { ja = "https://…", en = "https://…" }
+"account.save_profile" = { ja = "プロフィールを保存", en = "Save profile" }
+"account.saving" = { ja = "保存中…", en = "Saving…" }
+"account.profile_saved" = { ja = "プロフィールを保存しました", en = "Profile saved" }
+"account.no_changes" = { ja = "変更はありません", en = "Nothing changed" }
+"workspace.none" = { ja = "ワークスペースが選ばれていません。ヘッダーで切り替えてください。", en = "No workspace selected. Pick one in the header." }
+"workspace.loading" = { ja = "読み込み中…", en = "Loading…" }
+"workspace.load_error" = { ja = "ワークスペースを読み込めませんでした", en = "Could not load the workspace" }
+"workspace.no_access" = { ja = "このワークスペースの設定を見る権限がありません（ゲスト参加など）。", en = "You can't view this workspace's settings (for example as a guest)." }
+"workspace.id" = { ja = "ID", en = "ID" }
+"workspace.id_desc" = { ja = "URL などに使う識別子。変更できません。", en = "Identifier used in URLs. Cannot be changed." }
+"workspace.name" = { ja = "名前", en = "Name" }
+"workspace.name_placeholder" = { ja = "ワークスペース名", en = "Workspace name" }
+"workspace.name_required" = { ja = "名前を入力してください", en = "Enter a name" }
+"workspace.description" = { ja = "説明", en = "Description" }
+"workspace.description_placeholder" = { ja = "説明（任意）", en = "Description (optional)" }
+"workspace.emoji" = { ja = "アイコンの絵文字", en = "Icon emoji" }
+"workspace.emoji_placeholder" = { ja = "例: 🚀", en = "e.g. 🚀" }
+"workspace.require_2fa" = { ja = "2 段階認証の必須化", en = "Require two-factor authentication" }
+"workspace.require_2fa_desc" = { ja = "変更は Web のセッションでのみ行えます。", en = "Can only be changed from a web session." }
+"workspace.save" = { ja = "ワークスペースを保存", en = "Save workspace" }
+"workspace.saved" = { ja = "ワークスペースを保存しました", en = "Workspace saved" }
+"workspace.members" = { ja = "メンバー", en = "Members" }
+"workspace.members_error" = { ja = "メンバーを読み込めませんでした", en = "Could not load members" }
+"workspace.no_members" = { ja = "メンバーはいません", en = "No members" }
+"workspace.you" = { ja = "{name}（自分）", en = "{name} (you)" }
+"workspace.owner" = { ja = "オーナー", en = "Owner" }
+"workspace.role_admin" = { ja = "管理者", en = "Admin" }
+"workspace.role_member" = { ja = "メンバー", en = "Member" }
+"workspace.role_viewer" = { ja = "閲覧のみ", en = "Viewer" }
+"workspace.remove" = { ja = "外す", en = "Remove" }
+"workspace.remove_title" = { ja = "メンバーを外しますか？", en = "Remove member?" }
+"workspace.remove_desc" = { ja = "{name} はこのワークスペースのプロジェクトにアクセスできなくなります。", en = "{name} will lose access to this workspace's projects." }
+"workspace.removed" = { ja = "メンバーを外しました", en = "Member removed" }
+"workspace.cancel" = { ja = "キャンセル", en = "Cancel" }

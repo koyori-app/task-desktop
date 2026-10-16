@@ -8,10 +8,10 @@ use chrono::{DateTime, Utc};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::Icon;
 use gpui_kit::component::IndexPath;
-use gpui_kit::component::Theme;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::list::{List, ListDelegate, ListItem, ListState};
 use gpui_kit::component::tab::{Tab, TabBar};
+use gpui_kit::component::{Disableable, Sizable};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use i18n::t;
@@ -114,7 +114,7 @@ impl ListDelegate for NotificationListDelegate {
     ) -> Option<Self::Item> {
         self.items
             .get(index.row)
-            .map(|item| NotificationCenter::row(item, index.row, cx))
+            .map(|item| NotificationCenter::row(item, index.row, &self.owner, cx))
     }
 
     fn set_selected_index(
@@ -150,15 +150,16 @@ impl ListDelegate for NotificationListDelegate {
         _: &mut Window,
         cx: &mut Context<ListState<Self>>,
     ) -> impl IntoElement {
-        div()
-            .p_8()
-            .text_sm()
-            .text_color(Theme::global(cx).muted_foreground)
-            .child(if self.signed_in {
+        ::ui::empty_state(
+            &::ui::colors(cx),
+            IconName::BellOff,
+            if self.signed_in {
                 t!("notifications.center.empty")
             } else {
                 t!("notifications.center.signed_out")
-            })
+            },
+            None,
+        )
     }
 
     fn has_more(&self, _: &App) -> bool {
@@ -188,6 +189,8 @@ pub struct NotificationCenter {
     request_generation: u64,
     list: Option<Entity<ListState<NotificationListDelegate>>>,
     reset_list: bool,
+    /// 一覧 API が返した未読数（ヘッダーの表示用）。
+    unread_count: i64,
 }
 
 impl NotificationCenter {
@@ -202,6 +205,7 @@ impl NotificationCenter {
             request_generation: 0,
             list: None,
             reset_list: true,
+            unread_count: 0,
         }
     }
 
@@ -256,6 +260,7 @@ impl NotificationCenter {
                 this.loading = false;
                 match res {
                     Ok(page) => {
+                        this.unread_count = page.unread_count;
                         cx.emit(CenterEvent::UnreadCount(page.unread_count));
                         this.items = page.notifications;
                         this.history_cursor = page.next_cursor;
@@ -291,6 +296,7 @@ impl NotificationCenter {
                 this.loading = false;
                 match res {
                     Ok(page) => {
+                        this.unread_count = page.unread_count;
                         cx.emit(CenterEvent::UnreadCount(page.unread_count));
                         for item in page.notifications {
                             if !this.items.iter().any(|i| i.id == item.id) {
@@ -359,9 +365,25 @@ impl NotificationCenter {
         let Some(item) = self.items.get(ix).cloned() else {
             return;
         };
+        self.mark_read(ix, cx);
+        cx.emit(CenterEvent::Navigate(NavTarget {
+            project: item.project.clone(),
+            target: item.target.clone(),
+        }));
+        cx.notify();
+    }
+
+    /// 遷移せずに 1 件だけ既読にする（Optimistic、失敗で戻す）。
+    fn mark_read(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(item) = self.items.get(ix).cloned() else {
+            return;
+        };
         if item.read_at.is_none() {
             if let Some(slot) = self.items.get_mut(ix) {
                 slot.read_at = Some(Utc::now());
+            }
+            if self.filter == Filter::Unread {
+                self.items.remove(ix);
             }
             if let Some(client) = self.client.clone() {
                 let id = item.id;
@@ -388,10 +410,6 @@ impl NotificationCenter {
                 .detach();
             }
         }
-        cx.emit(CenterEvent::Navigate(NavTarget {
-            project: item.project.clone(),
-            target: item.target.clone(),
-        }));
         cx.notify();
     }
 
@@ -408,71 +426,109 @@ impl NotificationCenter {
         }
     }
 
-    fn row(item: &NotificationItem, ix: usize, cx: &App) -> ListItem {
-        let c = Theme::global(cx).semantic_tokens().colors;
-        let primary = Theme::global(cx).primary;
+    fn row(
+        item: &NotificationItem,
+        ix: usize,
+        owner: &WeakEntity<NotificationCenter>,
+        cx: &App,
+    ) -> ListItem {
+        let c = ::ui::colors(cx);
         let unread = item.read_at.is_none();
         let text = core::notify_text::toast(item);
         let title: SharedString = text.title.into();
         let body: SharedString = text.body.into();
         let time: SharedString = relative_time(&item.created_at).into();
+        let group = SharedString::from(format!("nc-row-{ix}"));
 
-        ListItem::new(("nc-row", ix))
-            .h(px(92.))
-            .px_4()
-            .py_2()
-            .when(unread, |row| row.bg(c.muted))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_start()
-                    .gap_3()
-                    .w_full()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .mt_1()
-                            .size(px(8.))
-                            .rounded_full()
-                            .flex_shrink_0()
-                            .when(unread, |d| d.bg(primary)),
-                    )
-                    .child(
-                        Icon::new(Self::kind_icon(item))
-                            .size_4()
-                            .text_color(c.muted_foreground),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .truncate()
-                                    .text_sm()
-                                    .font_weight(if unread {
-                                        FontWeight::SEMIBOLD
-                                    } else {
-                                        FontWeight::NORMAL
-                                    })
-                                    .child(title),
-                            )
-                            .when(!body.is_empty(), |d| {
-                                d.child(
-                                    div()
-                                        .truncate()
-                                        .text_xs()
-                                        .text_color(c.muted_foreground)
-                                        .child(body),
-                                )
-                            })
-                            .child(div().text_xs().text_color(c.muted_foreground).child(time)),
-                    ),
-            )
+        ListItem::new(("nc-row", ix)).px_4().py_2p5().child(
+            div()
+                .group(group.clone())
+                .flex()
+                .flex_row()
+                .items_start()
+                .gap_3()
+                .w_full()
+                .min_w_0()
+                .child(
+                    div()
+                        .mt(px(6.))
+                        .size(px(6.))
+                        .rounded_full()
+                        .flex_shrink_0()
+                        .when(unread, |d| d.bg(c.accent)),
+                )
+                .child(
+                    div()
+                        .mt(px(2.))
+                        .text_color(c.text_muted)
+                        .child(Icon::new(Self::kind_icon(item)).small()),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .truncate()
+                                .text_sm()
+                                .when(!unread, |d| d.text_color(c.text_muted))
+                                .font_weight(if unread {
+                                    FontWeight::MEDIUM
+                                } else {
+                                    FontWeight::NORMAL
+                                })
+                                .child(title),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1p5()
+                                .min_w_0()
+                                .text_xs()
+                                .text_color(c.text_muted)
+                                .when_some(item.project.as_ref(), |d, p| {
+                                    d.child(::ui::badge(&c, p.key.clone(), None))
+                                })
+                                .when(!body.is_empty(), |d| {
+                                    d.child(div().min_w_0().truncate().child(body))
+                                }),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .flex_shrink_0()
+                        .when(unread, |d| {
+                            let owner = owner.clone();
+                            let id = item.id;
+                            d.child(::ui::reveal_on_hover(
+                                group,
+                                Button::new(("nc-read", ix))
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(IconName::Check)
+                                    .tooltip(t!("notifications.center.mark_read"))
+                                    .on_click(move |_, _, cx| {
+                                        cx.stop_propagation();
+                                        let _ = owner.update(cx, |owner, cx| {
+                                            if let Some(ix) =
+                                                owner.items.iter().position(|i| i.id == id)
+                                            {
+                                                owner.mark_read(ix, cx);
+                                            }
+                                        });
+                                    }),
+                            ))
+                        })
+                        .child(div().text_xs().text_color(c.text_muted).child(time)),
+                ),
+        )
     }
 }
 
@@ -480,10 +536,7 @@ impl EventEmitter<CenterEvent> for NotificationCenter {}
 
 impl Render for NotificationCenter {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (c, danger) = {
-            let theme = Theme::global(cx);
-            (theme.semantic_tokens().colors, theme.danger)
-        };
+        let c = ::ui::colors(cx);
 
         let list = self
             .list
@@ -520,6 +573,7 @@ impl Render for NotificationCenter {
         });
         self.reset_list = false;
 
+        let ui_c = ::ui::colors(cx);
         div()
             .flex()
             .flex_col()
@@ -527,52 +581,44 @@ impl Render for NotificationCenter {
             .min_w_0()
             .min_h_0()
             .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_shrink_0()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_2()
-                    .px_4()
-                    .py_3()
-                    .border_b_1()
-                    .border_color(c.border)
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(t!("notifications.center.title")),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        Button::new("nc-refresh")
-                            .ghost()
-                            .icon(IconName::RefreshCcwDot)
-                            .tooltip(t!("notifications.center.refresh"))
-                            .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
-                    )
-                    .child(
-                        Button::new("nc-mark-all")
-                            .ghost()
-                            .icon(IconName::Check)
-                            .label(t!("notifications.center.mark_all_read"))
-                            .on_click(cx.listener(|this, _, _, cx| this.mark_all_read(cx))),
-                    ),
+                ::ui::page_header(
+                    &ui_c,
+                    t!("notifications.center.title"),
+                    (self.unread_count > 0).then(|| {
+                        t!("notifications.center.unread", count = self.unread_count).into()
+                    }),
+                )
+                .child(
+                    Button::new("nc-refresh")
+                        .ghost()
+                        .small()
+                        .icon(IconName::RefreshCw)
+                        .tooltip(t!("notifications.center.refresh"))
+                        .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                )
+                .child(
+                    Button::new("nc-mark-all")
+                        .ghost()
+                        .small()
+                        .disabled(
+                            self.unread_count == 0
+                                && self.items.iter().all(|i| i.read_at.is_some()),
+                        )
+                        .icon(IconName::CheckCheck)
+                        .label(t!("notifications.center.mark_all_read"))
+                        .on_click(cx.listener(|this, _, _, cx| this.mark_all_read(cx))),
+                ),
             )
             .child(
                 div()
-                    .flex()
-                    .flex_row()
                     .flex_shrink_0()
-                    .gap_1()
-                    .px_4()
-                    .py_2()
+                    .px_3()
                     .border_b_1()
                     .border_color(c.border)
                     .child(
                         TabBar::new("notification-filters")
                             .underline()
+                            .small()
                             .selected_index(self.filter as usize)
                             .children(
                                 Filter::ALL
@@ -588,10 +634,15 @@ impl Render for NotificationCenter {
             )
             .when_some(self.error.clone(), |d, e| {
                 d.child(
-                    div()
-                        .px_4()
-                        .py_2()
-                        .child(div().text_sm().text_color(danger).child(e)),
+                    div().px_4().py_2().child(
+                        ::ui::error_state(&ui_c, e).child(
+                            Button::new("nc-retry")
+                                .outline()
+                                .xsmall()
+                                .label(t!("notifications.center.retry"))
+                                .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                        ),
+                    ),
                 )
             })
             .child(div().flex_1().min_h_0().child(List::new(&list).size_full()))
@@ -600,7 +651,7 @@ impl Render for NotificationCenter {
                     div()
                         .p_2()
                         .text_xs()
-                        .text_color(c.muted_foreground)
+                        .text_color(c.text_muted)
                         .child(t!("notifications.center.loading")),
                 )
             })

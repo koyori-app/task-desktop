@@ -16,3 +16,6 @@
 "time.hours_ago" = { ja = "{n}時間前", en = "{n}h" }
 "time.yesterday" = { ja = "昨日", en = "1d" }
 "time.days_ago" = { ja = "{n}日前", en = "{n}d" }
+"center.unread" = { ja = "未読 {count} 件", en = "{count} unread" }
+"center.mark_read" = { ja = "既読にする", en = "Mark as read" }
+"center.retry" = { ja = "再試行", en = "Retry" }

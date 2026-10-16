@@ -51,3 +51,11 @@
 "palette.placeholder_search" = { ja = "タスクやプロジェクトへ移動…", en = "Jump to a task or project…" }
 "palette.searching" = { ja = "プロジェクトとタスクを検索中…", en = "Searching projects and tasks…" }
 "palette.hint" = { ja = "↑ ↓ で移動 · Enter で開く · Esc で閉じる", en = "↑ ↓ to navigate · Enter to open · Esc to close" }
+
+"nav.home" = { ja = "ホーム", en = "Home" }
+"nav.new_project" = { ja = "新しいプロジェクト", en = "New project" }
+"page.home_desc" = { ja = "自分のタスクの状況と、プロジェクトの進み具合", en = "Your tasks at a glance and how each project is progressing" }
+"tab.settings" = { ja = "設定", en = "Settings" }
+"palette.go_home" = { ja = "ホームへ移動", en = "Go to Home" }
+"palette.create_project" = { ja = "プロジェクトを作成", en = "Create Project" }
+"palette.project_settings" = { ja = "{key}: 設定", en = "{key}: Settings" }

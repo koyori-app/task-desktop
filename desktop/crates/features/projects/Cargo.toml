@@ -4,3 +4,11 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+i18n = { path = "../../i18n" }
+gpui-kit.workspace = true
+ui = { path = "../../ui" }
+api = { path = "../../api" }
+platform = { path = "../../platform" }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde_json = "1"

@@ -17,6 +17,8 @@ use base64::Engine;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+mod extra;
+
 const TENANT: &str = "11111111-1111-1111-1111-111111111111";
 const TENANT2: &str = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
 const PROJECT: &str = "22222222-2222-2222-2222-222222222222";
@@ -114,6 +116,13 @@ struct Mock {
     devices: Vec<Value>,
     reviews: Vec<Value>,
     next_seq: i32,
+    projects: Vec<Value>,
+    /// `extra` の資源（"<種類>:<親 id>" → 行）。
+    extra: std::collections::HashMap<String, Vec<Value>>,
+    profile: Value,
+    tenant_overrides: std::collections::HashMap<String, Value>,
+    notification_settings: std::collections::HashMap<String, Value>,
+    timers: std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>,
 }
 
 impl Mock {
@@ -409,7 +418,7 @@ impl Mock {
             })
         };
 
-        Self {
+        let mut mock = Self {
             tasks,
             labels,
             comments,
@@ -421,7 +430,10 @@ impl Mock {
                 json!({"id": Uuid::new_v4(), "name": "other-device", "last_used_at": null, "expires_at": "2027-01-01T00:00:00Z", "created_at": "2026-08-01T00:00:00Z"}),
             ],
             next_seq: 7 + GENERATED,
-        }
+            ..Default::default()
+        };
+        extra::seed(&mut mock);
+        mock
     }
 }
 
@@ -493,14 +505,6 @@ fn push_notification(
 
 // ---- handlers ----
 
-async fn get_me() -> Json<Value> {
-    Json(
-        json!({"id": USER_YUPIX, "username": "yupix", "email": "yupix@example.test",
-        "email_verified": true, "is_admin": false, "is_suspended": false,
-        "totp_enabled": true, "has_password": true, "avatar_url": null, "bio": "Mock account"}),
-    )
-}
-
 async fn tenants() -> Json<Value> {
     Json(json!([
         {
@@ -518,28 +522,8 @@ async fn tenants() -> Json<Value> {
     ]))
 }
 
-async fn projects(Path(tenant): Path<String>) -> Json<Value> {
-    let mut v = vec![
-        json!({"id": PERSONAL, "tenant_id": tenant, "key": "PERSONAL", "name": "Personal",
-            "description": "", "icon_url": null, "icon_emoji": null,
-            "is_personal": true, "personal_owner_id": USER_YUPIX}),
-    ];
-    if tenant == TENANT {
-        v.insert(
-            0,
-            json!({"id": PROJECT, "tenant_id": TENANT, "key": "MOCK", "name": "Mock Project",
-            "description": "", "icon_url": null, "icon_emoji": "📦",
-            "is_personal": false, "personal_owner_id": null}),
-        );
-    } else {
-        v.insert(
-            0,
-            json!({"id": PROJECT2, "tenant_id": TENANT2, "key": "OTH", "name": "Other Project",
-            "description": "", "icon_url": null, "icon_emoji": "📁",
-            "is_personal": false, "personal_owner_id": null}),
-        );
-    }
-    Json(json!(v))
+async fn projects(State(m): State<Shared>, Path(tenant): Path<String>) -> Json<Value> {
+    Json(json!(extra::tenant_projects(&m.lock().unwrap(), &tenant)))
 }
 
 async fn personal_project(Path(tenant): Path<String>) -> Json<Value> {
@@ -550,18 +534,11 @@ async fn personal_project(Path(tenant): Path<String>) -> Json<Value> {
     )
 }
 
-async fn statuses(Path((_, p)): Path<(String, String)>) -> Json<Value> {
-    let mk = |id: &str, name: &str, color: &str, pos: i32, done: bool, dd: bool| {
-        let mut s = status(id, name, color, pos, done, dd);
-        s["project_id"] = json!(p);
-        s
-    };
-    Json(json!([
-        mk(ST_BACKLOG, "Backlog", "#8b949e", 0, false, false),
-        mk(ST_TODO, "Todo", "#1f6feb", 1, false, false),
-        mk(ST_DOING, "In Progress", "#d29922", 2, false, false),
-        mk(ST_DONE, "Done", "#238636", 3, true, true),
-    ]))
+async fn statuses(State(m): State<Shared>, Path((_, p)): Path<(String, String)>) -> Json<Value> {
+    let mut m = m.lock().unwrap();
+    let mut list = extra::project_statuses(&mut m, &p).clone();
+    list.sort_by_key(|s| s["position"].as_i64());
+    Json(json!(list))
 }
 
 async fn assignable_users() -> Json<Value> {
@@ -793,6 +770,7 @@ async fn my_tasks(State(m): State<Shared>, Path(tenant): Path<String>) -> Json<V
         .iter()
         .filter(|t| {
             tenant_of_project(t["project_id"].as_str().unwrap_or_default()) == tenant
+                && t["is_archived"] != true
                 && t["assignees"]
                     .as_array()
                     .is_some_and(|a| a.iter().any(|x| x["user"]["id"] == USER_YUPIX))
@@ -1008,13 +986,22 @@ async fn create_comment(
         "updated_at": chrono::Utc::now().to_rfc3339(),
         "deleted_at": null,
     });
-    m.comments.push(json!({
+    let row = json!({
         "task_id": task_id,
         "id": c["id"], "body": c["body"], "created_at": c["created_at"],
         "updated_at": c["updated_at"], "is_deleted": false,
         "user": {"id": USER_YUPIX, "name": "yupix", "avatar_url": null},
         "replies": [],
-    }));
+    });
+    // 返信は親スレッドの replies に入れる（一覧はスレッド構造）。
+    match m
+        .comments
+        .iter_mut()
+        .find(|t| !body["parent_comment_id"].is_null() && t["id"] == body["parent_comment_id"])
+    {
+        Some(parent) => parent["replies"].as_array_mut().unwrap().push(row),
+        None => m.comments.push(row),
+    }
     let task = m.tasks[task_index].clone();
     push_notification(
         &mut m,
@@ -1448,7 +1435,6 @@ fn router(state: Shared) -> Router {
     let tp = format!("{t}/projects/{{project}}");
     // api crate は `base`（…/api）に `/v1/...` を継ぐので /api 配下にマウント。
     let v1 = Router::new()
-        .route("/v1/auth/me", get(get_me))
         .route("/v1/desktop/auth/token", post(exchange_desktop_code))
         .route("/v1/users/me/devices", get(list_devices))
         .route("/v1/users/me/devices/{id}", delete(delete_device))
@@ -1490,6 +1476,7 @@ fn router(state: Shared) -> Router {
             &format!("{tp}/review-findings/{{finding}}"),
             patch(update_finding),
         )
+        .merge(extra::routes(t, &tp))
         .layer(axum::middleware::from_fn(log_request))
         .with_state(state);
     // `api` クレートの Client は base（…/api まで）に `v1/...` を継ぐ。
@@ -1830,6 +1817,587 @@ mod tests {
             Err(api::ApiError::Unauthorized)
         ));
         assert!(clone.is_unauthorized());
+        server.abort();
+    }
+
+    /// クライアントの全メソッドが openapi.json にある (method, path) を叩くこと。
+    /// 応答の形は見ない（経路の綴り違い・メソッド違いを捕まえる）。
+    #[tokio::test]
+    async fn every_client_endpoint_exists_in_openapi() {
+        let seen: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+        let record = seen.clone();
+        let app = Router::new().fallback(move |req: axum::extract::Request| {
+            let record = record.clone();
+            async move {
+                record
+                    .lock()
+                    .unwrap()
+                    .push((req.method().to_string(), req.uri().path().to_string()));
+                Json(json!({}))
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/api", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let c = api::Client::new(&base, "dev").unwrap();
+        let (t, p, x, y) = (Uuid::nil(), Uuid::nil(), Uuid::nil(), Uuid::nil());
+        fn de<T: serde::de::DeserializeOwned>(value: Value) -> T {
+            serde_json::from_value(value).unwrap()
+        }
+
+        // 結果は捨てる（`{}` は大半の型に合わない）。叩いた経路だけ見る。
+        let _ = c.get_me().await;
+        let _ = c.update_me(&Default::default()).await;
+        let _ = c.list_tenants().await;
+        let _ = c.get_tenant(t).await;
+        let _ = c.update_tenant(t, &Default::default()).await;
+        let _ = c.list_tenant_members(t).await;
+        let _ = c
+            .add_tenant_member(t, &de(json!({"role": "Member", "user_id": x})))
+            .await;
+        let _ = c
+            .update_tenant_member(t, x, api::types::TenantRole::Admin)
+            .await;
+        let _ = c.remove_tenant_member(t, x).await;
+        let _ = c.get_dashboard(t, &Default::default()).await;
+        let _ = c.get_notification_settings(p).await;
+        let _ = c
+            .update_notification_settings(p, &de(json!({"email_events": [], "in_app_events": []})))
+            .await;
+        let _ = c.list_projects(t).await;
+        let _ = c.get_personal_project(t).await;
+        let _ = c.get_project(t, p).await;
+        let _ = c.create_project(t, &de(json!({"name": "n"}))).await;
+        let _ = c.update_project(t, p, &Default::default()).await;
+        let _ = c.delete_project(t, p).await;
+        let _ = c.list_project_members(t, p).await;
+        let _ = c
+            .add_project_member(t, p, &de(json!({"role": "Member", "user_id": x})))
+            .await;
+        let _ = c
+            .update_project_member(t, p, x, api::types::ProjectRole::Viewer)
+            .await;
+        let _ = c.remove_project_member(t, p, x).await;
+        let _ = c.list_assignable_users(t, p, None).await;
+        let _ = c.list_statuses(t, p).await;
+        let _ = c
+            .create_status(
+                t,
+                p,
+                &de(json!({"name": "s", "color": "#000000", "position": 0})),
+            )
+            .await;
+        let _ = c.update_status(t, p, x, &Default::default()).await;
+        let _ = c.delete_status(t, p, x, Some(y)).await;
+        let _ = c.reorder_statuses(t, p, vec![x]).await;
+        let _ = c.list_labels(t, p).await;
+        let _ = c
+            .create_label(t, p, &de(json!({"name": "l", "color": "#000000"})))
+            .await;
+        let _ = c.update_label(t, p, x, &Default::default()).await;
+        let _ = c.delete_label(t, p, x).await;
+        let _ = c.export_labels(t, p).await;
+        let _ = c
+            .import_labels(t, p, &de(json!({"labels": [], "version": 1})))
+            .await;
+        let _ = c.list_milestones(t, p).await;
+        let _ = c.get_milestone(t, p, x).await;
+        let _ = c
+            .create_milestone(t, p, &de(json!({"name": "m", "due_date": "2026-01-01"})))
+            .await;
+        let _ = c.update_milestone(t, p, x, &Default::default()).await;
+        let _ = c.delete_milestone(t, p, x).await;
+        let _ = c
+            .list_sprints(t, p, Some(api::types::SprintStatus::Active))
+            .await;
+        let _ = c.get_sprint(t, p, x).await;
+        let _ = c
+            .create_sprint(
+                t,
+                p,
+                &de(json!({"name": "s", "start_date": "2026-01-01", "end_date": "2026-01-14"})),
+            )
+            .await;
+        let _ = c.update_sprint(t, p, x, &Default::default()).await;
+        let _ = c.delete_sprint(t, p, x).await;
+        let _ = c.start_sprint(t, p, x).await;
+        let _ = c.complete_sprint(t, p, x, &Default::default()).await;
+        let _ = c.assign_tasks_to_sprint(t, p, x, vec![y]).await;
+        let _ = c.list_custom_fields(t, p).await;
+        let _ = c
+            .create_custom_field(t, p, &de(json!({"name": "f", "field_type": "text"})))
+            .await;
+        let _ = c.update_custom_field(t, p, x, &Default::default()).await;
+        let _ = c.delete_custom_field(t, p, x).await;
+        let _ = c.list_task_views(t, p).await;
+        let _ = c.create_task_view(t, p, &de(json!({"name": "v"}))).await;
+        let _ = c.update_task_view(t, p, x, &Default::default()).await;
+        let _ = c.delete_task_view(t, p, x).await;
+        let _ = c.get_github_integration(t, p).await;
+        let _ = c.start_github_install(t, p).await;
+        let _ = c.list_my_tasks(t, &Default::default()).await;
+        let _ = c.list_tasks(t, p, &Default::default()).await;
+        let _ = c.search_tasks(t, p, "q").await;
+        let _ = c.get_task(t, p, x).await;
+        let _ = c
+            .create_task(t, p, &de(json!({"title": "t", "status_id": y})))
+            .await;
+        let _ = c.update_task(t, p, x, &Default::default()).await;
+        let _ = c.delete_task(t, p, x).await;
+        let _ = c.archive_task(t, p, x).await;
+        let _ = c.unarchive_task(t, p, x).await;
+        let _ = c
+            .bulk_update_tasks(t, p, &de(json!({"task_ids": [x], "update": {}})))
+            .await;
+        let _ = c.list_activities(t, p, x, Some("c".into())).await;
+        let _ = c.list_assignees(t, p, x).await;
+        let _ = c
+            .add_assignee(t, p, x, &de(json!({"role": "assignee", "user_id": y})))
+            .await;
+        let _ = c.update_assignee(t, p, x, y, "reviewer").await;
+        let _ = c.remove_assignee(t, p, x, y).await;
+        let _ = c.list_task_attachments(t, p, x).await;
+        let _ = c.detach_task_file(t, p, x, y).await;
+        let _ = c.list_comments(t, p, x).await;
+        let _ = c.create_comment(t, p, x, &de(json!({"body": "b"}))).await;
+        let _ = c.update_comment(t, p, x, y, "b").await;
+        let _ = c.delete_comment(t, p, x, y).await;
+        let _ = c.list_relations(t, p, x).await;
+        let _ = c.add_relation(t, p, x, y, "blocks").await;
+        let _ = c.remove_relation(t, p, x, y).await;
+        let _ = c.list_time_logs(t, p, x).await;
+        let _ = c
+            .create_time_log(
+                t,
+                p,
+                x,
+                &de(json!({"logged_minutes": 5, "logged_at": "2026-01-01"})),
+            )
+            .await;
+        let _ = c.update_time_log(t, p, x, y, &Default::default()).await;
+        let _ = c.delete_time_log(t, p, x, y).await;
+        let _ = c.get_time_summary(t, p, x).await;
+        let _ = c.start_timer(t, p, x).await;
+        let _ = c.stop_timer(t, p, x).await;
+        let _ = c.get_timer_status(t, p, x).await;
+        let _ = c.start_watch(t, p, x).await;
+        let _ = c.stop_watch(t, p, x).await;
+        let _ = c.list_watchers(t, p, x).await;
+        let _ = c.list_reviewed_pull_requests(t, p).await;
+        let _ = c.list_reviews(t, p, Some(1), None).await;
+        let _ = c.get_review(t, p, x).await;
+        let _ = c.get_review_summary(t, p, 1, None).await;
+        let _ = c.list_review_findings(t, p, &Default::default()).await;
+        let _ = c
+            .update_finding_state(t, p, x, api::types::FindingState::Fixed, None)
+            .await;
+        let _ = c
+            .create_review(
+                t,
+                p,
+                &de(
+                    json!({"pr_number": 1, "head_sha": "0123456789abcdef0123456789abcdef01234567"}),
+                ),
+            )
+            .await;
+        let _ = c.list_notifications(&Default::default()).await;
+        let _ = c.mark_notification_read(x).await;
+        let _ = c.mark_all_notifications_read().await;
+        server.abort();
+
+        let spec: Value = serde_json::from_str(include_str!("../../api/openapi.json")).unwrap();
+        let paths = spec["paths"].as_object().unwrap();
+        let matches = |template: &str, path: &str| {
+            let (a, b): (Vec<_>, Vec<_>) =
+                (template.split('/').collect(), path.split('/').collect());
+            a.len() == b.len()
+                && a.iter()
+                    .zip(&b)
+                    .all(|(t, s)| t == s || (t.starts_with('{') && !s.is_empty()))
+        };
+        let seen = seen.lock().unwrap().clone();
+        assert!(seen.len() > 100, "recorded only {} requests", seen.len());
+        let missing: Vec<_> = seen
+            .iter()
+            .filter(|(method, path)| {
+                let path = path.strip_prefix("/api").unwrap_or(path);
+                !paths.iter().any(|(template, ops)| {
+                    matches(template, path) && ops.get(method.to_lowercase()).is_some()
+                })
+            })
+            .collect();
+        assert!(missing.is_empty(), "not in openapi.json: {missing:?}");
+    }
+
+    /// 新しく足した資源を mock 相手に一通り操作し、応答が生成型に読めることを確かめる。
+    #[tokio::test]
+    async fn extended_resources_round_trip() {
+        use api::TasksQuery;
+        use api::types::*;
+        fn de<T: serde::de::DeserializeOwned>(value: Value) -> T {
+            serde_json::from_value(value).unwrap()
+        }
+        let (c, server, _) = client().await;
+        let t: Uuid = TENANT.parse().unwrap();
+        let p: Uuid = PROJECT.parse().unwrap();
+
+        // account / tenant
+        let me = c
+            .update_me(&UpdateProfileRequest {
+                bio: Some("updated".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(me.bio.as_deref(), Some("updated"));
+        assert_eq!(c.get_me().await.unwrap().bio.as_deref(), Some("updated"));
+        let tenant = c
+            .update_tenant(
+                t,
+                &UpdateTenantRequest {
+                    name: Some("Renamed".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(tenant.name, "Renamed");
+        assert!(matches!(
+            c.update_tenant(TENANT2.parse().unwrap(), &Default::default())
+                .await,
+            Err(api::ApiError::Forbidden { .. })
+        ));
+        let members = c.list_tenant_members(t).await.unwrap();
+        let alice = members.iter().find(|m| m.user.username == "alice").unwrap();
+        let alice_id = alice.user_id;
+        c.update_tenant_member(t, alice_id, TenantRole::Viewer)
+            .await
+            .unwrap();
+        c.remove_tenant_member(t, alice_id).await.unwrap();
+        assert_eq!(
+            c.list_tenant_members(t).await.unwrap().len(),
+            members.len() - 1
+        );
+        let dashboard = c.get_dashboard(t, &Default::default()).await.unwrap();
+        assert!(dashboard.counts.open > 0 && !dashboard.projects.is_empty());
+
+        // notification settings: 送った一覧がそのまま返る
+        let settings = c
+            .update_notification_settings(
+                p,
+                &de(json!({"in_app_events": ["assigned"], "email_events": []})),
+            )
+            .await
+            .unwrap();
+        assert_eq!(settings.in_app_events, vec!["assigned".to_string()]);
+        assert_eq!(
+            c.get_notification_settings(p)
+                .await
+                .unwrap()
+                .in_app_events
+                .len(),
+            1
+        );
+
+        // projects
+        let created = c
+            .create_project(t, &de(json!({"name": "Desk", "key": "DSK"})))
+            .await
+            .unwrap();
+        assert!(
+            c.list_projects(t)
+                .await
+                .unwrap()
+                .iter()
+                .any(|x| x.id == created.id)
+        );
+        let renamed = c
+            .update_project(
+                t,
+                created.id,
+                &UpdateProjectRequest {
+                    name: Some("Desk 2".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(renamed.name, "Desk 2");
+        assert_eq!(c.get_project(t, created.id).await.unwrap().name, "Desk 2");
+        assert_eq!(
+            c.list_project_members(t, created.id).await.unwrap().len(),
+            1
+        );
+        c.add_project_member(
+            t,
+            created.id,
+            &de(json!({"role": "Member", "user_id": USER_ALICE})),
+        )
+        .await
+        .unwrap();
+        c.update_project_member(
+            t,
+            created.id,
+            USER_ALICE.parse().unwrap(),
+            ProjectRole::Viewer,
+        )
+        .await
+        .unwrap();
+        c.remove_project_member(t, created.id, USER_ALICE.parse().unwrap())
+            .await
+            .unwrap();
+        c.delete_project(t, created.id).await.unwrap();
+        assert!(
+            !c.list_projects(t)
+                .await
+                .unwrap()
+                .iter()
+                .any(|x| x.id == created.id)
+        );
+
+        // statuses: 作成 → 並べ替え → 使用中は移行先付きで削除
+        let review = c
+            .create_status(
+                t,
+                p,
+                &de(json!({"name": "Review", "color": "#ff00ff", "position": 4})),
+            )
+            .await
+            .unwrap();
+        c.update_status(
+            t,
+            p,
+            review.id,
+            &UpdateStatusRequest {
+                name: Some("In Review".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let mut ids: Vec<Uuid> = c
+            .list_statuses(t, p)
+            .await
+            .unwrap()
+            .iter()
+            .map(|s| s.id)
+            .collect();
+        ids.rotate_right(1);
+        let reordered = c.reorder_statuses(t, p, ids.clone()).await.unwrap();
+        assert_eq!(reordered[0].id, review.id);
+        let todo: Uuid = ST_TODO.parse().unwrap();
+        assert!(matches!(
+            c.delete_status(t, p, todo, None).await,
+            Err(api::ApiError::Conflict { .. })
+        ));
+        c.delete_status(t, p, todo, Some(review.id)).await.unwrap();
+        assert!(
+            !c.list_statuses(t, p)
+                .await
+                .unwrap()
+                .iter()
+                .any(|s| s.id == todo)
+        );
+
+        // labels
+        let label = c
+            .create_label(t, p, &de(json!({"name": "ux", "color": "#123456"})))
+            .await
+            .unwrap();
+        c.update_label(
+            t,
+            p,
+            label.id,
+            &UpdateLabelRequest {
+                color: Some("#654321".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let export = c.export_labels(t, p).await.unwrap();
+        assert!(export.labels.iter().any(|l| l.name == "ux"));
+        c.delete_label(t, p, label.id).await.unwrap();
+        let imported = c
+            .import_labels(t, p, &de(json!({"version": 1, "labels": [{"name": "ux", "color": "#111111", "description": ""}]})))
+            .await
+            .unwrap();
+        assert_eq!(imported.len(), 1);
+
+        // milestones / sprints
+        let ms = c
+            .create_milestone(t, p, &de(json!({"name": "v2", "due_date": "2026-12-01"})))
+            .await
+            .unwrap();
+        assert!(
+            c.list_milestones(t, p)
+                .await
+                .unwrap()
+                .iter()
+                .any(|m| m.id == ms.id)
+        );
+        let detail = c.get_milestone(t, p, ms.id).await.unwrap();
+        assert_eq!(detail.task_counts.total, 0);
+        c.update_milestone(
+            t,
+            p,
+            ms.id,
+            &UpdateMilestoneRequest {
+                name: Some("v2.0".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        c.delete_milestone(t, p, ms.id).await.unwrap();
+        let active = c.list_sprints(t, p, None).await.unwrap();
+        let sp = c
+            .create_sprint(
+                t,
+                p,
+                &de(json!({"name": "Sprint 2", "start_date": "2026-10-01", "end_date": "2026-10-14"})),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            c.start_sprint(t, p, sp.id).await,
+            Err(api::ApiError::Conflict { .. })
+        ));
+        let tasks = c.list_tasks(t, p, &Default::default()).await.unwrap().tasks;
+        c.assign_tasks_to_sprint(t, p, sp.id, vec![tasks[0].id])
+            .await
+            .unwrap();
+        assert_eq!(
+            c.get_sprint(t, p, sp.id).await.unwrap().task_counts.total,
+            1
+        );
+        c.complete_sprint(t, p, active[0].id, &Default::default())
+            .await
+            .unwrap();
+        c.start_sprint(t, p, sp.id).await.unwrap();
+        c.delete_sprint(t, p, sp.id).await.unwrap();
+
+        // custom fields / views / github
+        let field = c
+            .create_custom_field(t, p, &de(json!({"name": "URL", "field_type": "url"})))
+            .await
+            .unwrap();
+        c.update_custom_field(t, p, field.id, &Default::default())
+            .await
+            .unwrap();
+        assert_eq!(c.list_custom_fields(t, p).await.unwrap().fields.len(), 2);
+        c.delete_custom_field(t, p, field.id).await.unwrap();
+        let view = c
+            .create_task_view(t, p, &de(json!({"name": "Mine"})))
+            .await
+            .unwrap();
+        assert_eq!(c.list_task_views(t, p).await.unwrap().views.len(), 1);
+        c.delete_task_view(t, p, view.id).await.unwrap();
+        assert!(c.get_github_integration(t, p).await.unwrap().connected);
+        assert!(
+            c.start_github_install(t, p)
+                .await
+                .unwrap()
+                .url
+                .starts_with("https://")
+        );
+
+        // task extras
+        let (a, b) = (tasks[0].id, tasks[1].id);
+        c.add_relation(t, p, a, b, "blocks").await.unwrap();
+        assert!(matches!(
+            c.add_relation(t, p, a, b, "blocked_by").await,
+            Err(api::ApiError::Conflict { .. })
+        ));
+        let rel = c.list_relations(t, p, a).await.unwrap();
+        assert_eq!(rel.blocks.len(), 1);
+        assert_eq!(c.list_relations(t, p, b).await.unwrap().blocked_by.len(), 1);
+        c.remove_relation(t, p, a, rel.blocks[0].relation_id)
+            .await
+            .unwrap();
+        assert!(c.list_relations(t, p, a).await.unwrap().blocks.is_empty());
+        assert!(
+            !c.list_activities(t, p, a, None)
+                .await
+                .unwrap()
+                .activities
+                .is_empty()
+        );
+
+        c.create_time_log(
+            t,
+            p,
+            a,
+            &de(json!({"logged_minutes": 30, "logged_at": "2026-10-01"})),
+        )
+        .await
+        .unwrap();
+        assert!(!c.get_timer_status(t, p, a).await.unwrap().is_running);
+        c.start_timer(t, p, a).await.unwrap();
+        assert!(c.get_timer_status(t, p, a).await.unwrap().is_running);
+        c.stop_timer(t, p, a).await.unwrap();
+        let logs = c.list_time_logs(t, p, a).await.unwrap();
+        assert_eq!(logs.len(), 2);
+        assert!(c.get_time_summary(t, p, a).await.unwrap().actual_minutes >= 31);
+        c.delete_time_log(t, p, a, logs[0].id).await.unwrap();
+
+        c.start_watch(t, p, a).await.unwrap();
+        assert_eq!(c.list_watchers(t, p, a).await.unwrap().watchers.len(), 1);
+        c.stop_watch(t, p, a).await.unwrap();
+        assert!(c.list_watchers(t, p, a).await.unwrap().watchers.is_empty());
+        assert!(
+            c.list_task_attachments(t, p, a)
+                .await
+                .unwrap()
+                .attachments
+                .is_empty()
+        );
+
+        // comments: 返信はスレッドに入り、自分の分は編集・削除できる
+        let thread = c.list_comments(t, p, a).await.unwrap().comments[1].clone();
+        c.create_comment(
+            t,
+            p,
+            a,
+            &de(json!({"body": "reply", "parent_comment_id": thread.id})),
+        )
+        .await
+        .unwrap();
+        let after = c.list_comments(t, p, a).await.unwrap().comments;
+        assert_eq!(after.len(), 2);
+        assert_eq!(after[1].replies.len(), thread.replies.len() + 1);
+        c.update_comment(t, p, a, thread.id, "edited")
+            .await
+            .unwrap();
+        assert!(matches!(
+            c.update_comment(t, p, a, after[0].id, "not mine").await,
+            Err(api::ApiError::Forbidden { .. })
+        ));
+        c.delete_comment(t, p, a, thread.id).await.unwrap();
+        assert!(c.list_comments(t, p, a).await.unwrap().comments[1].is_deleted);
+
+        // bulk / archive / delete
+        let bulk = c
+            .bulk_update_tasks(
+                t,
+                p,
+                &de(json!({"task_ids": [a, b, Uuid::new_v4()], "update": {"status_id": ST_DOING}})),
+            )
+            .await
+            .unwrap();
+        assert_eq!((bulk.updated, bulk.failed.len()), (2, 1));
+        assert!(c.archive_task(t, p, a).await.unwrap().is_archived);
+        let archived = TasksQuery {
+            is_archived: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(c.list_tasks(t, p, &archived).await.unwrap().tasks.len(), 1);
+        assert!(!c.unarchive_task(t, p, a).await.unwrap().is_archived);
+        c.delete_task(t, p, b).await.unwrap();
+        assert!(matches!(
+            c.get_task(t, p, b).await,
+            Err(api::ApiError::NotFound)
+        ));
         server.abort();
     }
 }

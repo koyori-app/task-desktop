@@ -143,6 +143,38 @@ impl Client {
         })
     }
 
+    /// 新しいエンドポイント用の短い経路: tokio 上で 1 リクエストを送る。
+    pub(crate) async fn request<T>(
+        &self,
+        method: Method,
+        segments: Vec<String>,
+        query: Vec<(String, String)>,
+        body: Option<serde_json::Value>,
+    ) -> Result<T>
+    where
+        T: DeserializeOwned + Send + 'static,
+    {
+        let c = self.clone();
+        on_runtime(async move {
+            let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
+            c.send(method, &segments, &query, body).await
+        })
+        .await
+    }
+
+    /// 応答本文を使わない（204 など）版の [`Self::request`]。
+    pub(crate) async fn request_unit(
+        &self,
+        method: Method,
+        segments: Vec<String>,
+        query: Vec<(String, String)>,
+        body: Option<serde_json::Value>,
+    ) -> Result<()> {
+        self.request::<serde_json::Value>(method, segments, query, body)
+            .await?;
+        Ok(())
+    }
+
     async fn send_unit(
         &self,
         method: Method,

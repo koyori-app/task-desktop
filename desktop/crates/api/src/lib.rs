@@ -3,6 +3,7 @@
 mod avatar;
 mod client;
 mod error;
+mod resources;
 pub mod spec;
 pub mod types {
     #![allow(dead_code)]
@@ -13,3 +14,4 @@ pub mod types {
 pub use avatar::{AvatarBytes, fetch_avatar};
 pub use client::{Client, FindingsQuery, MyTasksQuery, NotificationsQuery, TasksQuery};
 pub use error::{ApiError, Result};
+pub use resources::DashboardQuery;

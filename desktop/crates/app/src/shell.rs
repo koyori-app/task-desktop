@@ -4,15 +4,16 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::command::CommandItem;
+use gpui_kit::component::menu::ContextMenuExt;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel};
-use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenuItem};
 use gpui_kit::component::tab::{Tab, TabBar};
-use gpui_kit::component::{Icon, IndexPath, Root, Selectable, WindowExt};
+use gpui_kit::component::{Icon, IndexPath, Root, Selectable, Sizable, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use feature_notifications::{CenterEvent, NavTarget, NotificationCenter};
+use feature_projects::{HomeEvent, HomeView, ProjectSettingsEvent, ProjectSettingsView};
 use feature_reviews::{ReviewDetailEvent, ReviewDetailView, ReviewListEvent, ReviewListView};
 use feature_settings::{SettingsEvent, SettingsView};
 use feature_tasks::{ListMode, TaskDetailEvent, TaskDetailView, TaskListEvent, TaskListView};
@@ -44,6 +45,7 @@ enum PaletteAct {
     CreateTask,
     SearchTasks,
     StartReview,
+    CreateProject,
     OpenCurrentReview,
     FindingAction(api::types::FindingState),
     ToggleSidebar,
@@ -62,6 +64,8 @@ struct PaletteEntry {
 #[allow(dead_code)] // TaskDetail / Reviews は feature 実装で生成される
 #[derive(Debug, Clone, PartialEq)]
 pub enum Route {
+    /// ダッシュボード（件数・進捗・最近の更新）。
+    Home,
     MyTasks,
     Notifications,
     Project {
@@ -73,6 +77,10 @@ pub enum Route {
         task: uuid::Uuid,
     },
     Reviews {
+        project: uuid::Uuid,
+    },
+    /// プロジェクトの設定（メンバー・ステータス・ラベル・計画・通知など）。
+    ProjectSettings {
         project: uuid::Uuid,
     },
     Settings,
@@ -106,6 +114,10 @@ pub struct AppShell {
     pub review_detail: Entity<ReviewDetailView>,
     /// §22 Settings。
     pub settings_view: Entity<SettingsView>,
+    /// ホーム（ダッシュボード）。
+    home: Entity<HomeView>,
+    /// プロジェクト設定。
+    project_settings: Entity<ProjectSettingsView>,
     pub route: Route,
     /// Settings を閉じた時に戻る画面。
     route_before_settings: Route,
@@ -119,6 +131,8 @@ pub struct AppShell {
     pub resizable: Entity<ResizableState>,
     review_resizable: Entity<ResizableState>,
     sidebar_visible: bool,
+    /// ヘッダーを押したまま動かしたらウィンドウを動かす（macOS のタイトルバー代わり）。
+    header_drag: bool,
     focus_handle: FocusHandle,
     session_generation: u64,
     search_generation: u64,
@@ -173,8 +187,13 @@ impl AppShell {
         });
         let review_list = cx.new(|cx| ReviewListView::new(client.clone(), tenant, window, cx));
         let review_detail = cx.new(|_| ReviewDetailView::new(client.clone(), tenant));
-        let task_changed = cx.subscribe(&task_detail, |this, _, _: &TaskDetailEvent, cx| {
-            this.task_list.update(cx, |list, cx| list.reload(cx));
+        let task_changed = cx.subscribe(&task_detail, |this, _, event: &TaskDetailEvent, cx| {
+            if matches!(
+                event,
+                TaskDetailEvent::Updated { .. } | TaskDetailEvent::Removed { .. }
+            ) {
+                this.task_list.update(cx, |list, cx| list.reload(cx));
+            }
         });
         let review_navigation = cx.subscribe(
             &review_detail,
@@ -239,8 +258,70 @@ impl AppShell {
                     this.end_session(false, cx);
                 }
                 SettingsEvent::Close => this.close_settings(cx),
+                SettingsEvent::TenantUpdated { id, name } => {
+                    if let Some(tenant) = this.tenants.iter_mut().find(|t| t.id == *id) {
+                        tenant.name = name.clone();
+                    }
+                    cx.notify();
+                }
             },
         );
+
+        let home = cx.new(|cx| HomeView::new(client.clone(), tenant, window, cx));
+        let home_sub = cx.subscribe(&home, |this, _, event: &HomeEvent, cx| match event {
+            HomeEvent::OpenTask { project, task } => this.navigate(
+                Route::TaskDetail {
+                    project: *project,
+                    task: *task,
+                },
+                cx,
+            ),
+            HomeEvent::OpenProject(id) => {
+                if let Some(route) = this.project_route(*id) {
+                    this.navigate(route, cx);
+                }
+            }
+        });
+        let project_settings =
+            cx.new(|cx| ProjectSettingsView::new(client.clone(), tenant, window, cx));
+        let project_settings_sub = cx.subscribe(
+            &project_settings,
+            |this, _, event: &ProjectSettingsEvent, cx| match event {
+                ProjectSettingsEvent::Updated(project) => {
+                    if let Some(slot) = this.projects.iter_mut().find(|p| p.id == project.id) {
+                        *slot = project.clone();
+                    }
+                    this.sync_project_keys(cx);
+                    cx.notify();
+                }
+                ProjectSettingsEvent::Deleted(id) => {
+                    this.projects.retain(|p| p.id != *id);
+                    this.sync_project_keys(cx);
+                    this.navigate(Route::MyTasks, cx);
+                }
+                // ステータス・ラベル等が変わった。一覧の手元の写しを捨てて取り直す。
+                ProjectSettingsEvent::CatalogChanged(id) => {
+                    let id = *id;
+                    this.task_list
+                        .update(cx, |list, cx| list.invalidate_project(id, cx));
+                    this.task_detail.update(cx, |d, _| d.invalidate_catalog());
+                }
+            },
+        );
+        let task_detail_nav =
+            cx.subscribe(
+                &task_detail,
+                |this, _, event: &TaskDetailEvent, cx| match event {
+                    TaskDetailEvent::OpenTask { project, task } => this.navigate(
+                        Route::TaskDetail {
+                            project: *project,
+                            task: *task,
+                        },
+                        cx,
+                    ),
+                    TaskDetailEvent::Removed { .. } | TaskDetailEvent::Updated { .. } => {}
+                },
+            );
 
         let notif_prefs = std::rc::Rc::new(std::cell::RefCell::new(settings.notifications.clone()));
         let (activation_tx, activation_rx) = std::sync::mpsc::channel();
@@ -249,6 +330,8 @@ impl AppShell {
             settings_store,
             client: client.clone(),
             settings_view,
+            home,
+            project_settings,
             center,
             task_list,
             task_detail,
@@ -265,6 +348,7 @@ impl AppShell {
             resizable: cx.new(|_| ResizableState::default()),
             review_resizable: cx.new(|_| ResizableState::default()),
             sidebar_visible: true,
+            header_drag: false,
             focus_handle: cx.focus_handle(),
             session_generation: 0,
             search_generation: 0,
@@ -282,7 +366,17 @@ impl AppShell {
             palette: None,
             palette_view: None,
             palette_entries: vec![],
-            _subs: vec![sub, sub2, sub3, sub4, task_changed, review_navigation],
+            _subs: vec![
+                sub,
+                sub2,
+                sub3,
+                sub4,
+                task_changed,
+                review_navigation,
+                home_sub,
+                project_settings_sub,
+                task_detail_nav,
+            ],
         };
         this.start_polling(engine, cx);
         let focus_lost = cx.on_focus_lost(window, |this, window, cx| {
@@ -352,6 +446,7 @@ impl AppShell {
                         .update(cx, |l, _| l.set_client(client.clone(), tenant));
                     s.review_detail
                         .update(cx, |d, _| d.set_client(client.clone(), tenant));
+                    s.set_tenant_views(&client, tenant, cx);
                     if tenant.is_none() {
                         // An account with no tenants is a complete, empty catalog.
                         s.projects.clear();
@@ -378,9 +473,8 @@ impl AppShell {
                 s.catalog_loading = false;
                 match projects {
                     Ok(projects) => {
-                        let keys: Vec<_> = projects.iter().map(|p| (p.id, p.key.clone())).collect();
-                        s.task_detail.update(cx, |d, _| d.set_project_keys(keys));
                         s.projects = projects;
+                        s.sync_project_keys(cx);
                         s.catalog_ready = true;
                     }
                     Err(_) => s.connection = ConnectionStatus::Offline,
@@ -462,6 +556,7 @@ impl AppShell {
             .update(cx, |d, _| d.set_client(client.clone(), tenant));
         self.settings_view
             .update(cx, |v, cx| v.set_client(client.clone(), cx));
+        self.set_tenant_views(&client, tenant, cx);
         let engine = core::NotificationEngine::new(
             client.clone(),
             ::platform::Notifier::new(::platform::WINDOWS_AUMID),
@@ -642,6 +737,8 @@ impl AppShell {
         self.review_detail.update(cx, |d, _| d.clear_client());
         self.center.update(cx, |c, cx| c.clear_client(cx));
         self.settings_view.update(cx, |v, cx| v.clear_client(cx));
+        self.home.update(cx, |v, cx| v.clear_client(cx));
+        self.project_settings.update(cx, |v, cx| v.clear_client(cx));
         self.settings.notification_cursor = None;
         let _ = self.settings_store.save(&self.settings);
         if expired {
@@ -720,6 +817,12 @@ impl AppShell {
                 self.review_list.update(cx, |l, cx| l.set_project(p, cx));
                 self.review_detail.update(cx, |d, _| d.set_project(p));
             }
+            Route::Home => self.home.update(cx, |home, cx| home.reload(cx)),
+            Route::ProjectSettings { project } => {
+                let p = *project;
+                self.project_settings
+                    .update(cx, |view, cx| view.open(p, cx));
+            }
             _ => {}
         }
         if route == Route::Settings && self.route != Route::Settings {
@@ -748,9 +851,69 @@ impl AppShell {
     fn current_project(&self) -> Option<uuid::Uuid> {
         match &self.route {
             Route::Project { id, .. } => Some(*id),
-            Route::Reviews { project } | Route::TaskDetail { project, .. } => Some(*project),
+            Route::Reviews { project }
+            | Route::TaskDetail { project, .. }
+            | Route::ProjectSettings { project } => Some(*project),
             _ => None,
         }
+    }
+
+    /// プロジェクトの一覧ルート（キー付き）。未知の id なら None。
+    fn project_route(&self, id: uuid::Uuid) -> Option<Route> {
+        self.projects
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| Route::Project {
+                id,
+                label: p.key.clone(),
+            })
+    }
+
+    /// テナントに紐づく View（ホーム・プロジェクト設定・設定の Workspace）へ渡す。
+    fn set_tenant_views(
+        &mut self,
+        client: &api::Client,
+        tenant: Option<uuid::Uuid>,
+        cx: &mut Context<Self>,
+    ) {
+        self.home
+            .update(cx, |v, cx| v.set_client(client.clone(), tenant, cx));
+        self.project_settings
+            .update(cx, |v, cx| v.set_client(client.clone(), tenant, cx));
+        self.settings_view
+            .update(cx, |v, cx| v.set_tenant(tenant, cx));
+    }
+
+    fn sync_project_keys(&mut self, cx: &mut Context<Self>) {
+        let keys: Vec<_> = self
+            .projects
+            .iter()
+            .map(|p| (p.id, p.key.clone()))
+            .collect();
+        self.task_detail.update(cx, |d, _| d.set_project_keys(keys));
+    }
+
+    /// 新しいプロジェクトのダイアログ。作成後はそのプロジェクトのタスク一覧へ移る。
+    fn create_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(client), Some(tenant)) = (self.client.clone(), self.settings.last_tenant_id)
+        else {
+            return;
+        };
+        let shell = cx.entity().downgrade();
+        feature_projects::open_create_project(client, tenant, window, cx, move |project, _, cx| {
+            let _ = shell.update(cx, |this, cx| {
+                if this.settings.last_tenant_id != Some(project.tenant_id) {
+                    return;
+                }
+                let route = Route::Project {
+                    id: project.id,
+                    label: project.key.clone(),
+                };
+                this.projects.push(project);
+                this.sync_project_keys(cx);
+                this.navigate(route, cx);
+            });
+        });
     }
 
     fn nav_item(
@@ -758,28 +921,38 @@ impl AppShell {
         route: Route,
         label: impl Into<SharedString>,
         icon: IconName,
+        colors: &KoyoriColors,
         cx: &mut Context<Self>,
-    ) -> SidebarMenuItem {
+    ) -> Stateful<Div> {
         let active = self.route == route;
-        SidebarMenuItem::new(label)
-            .icon(icon)
-            .active(active)
-            .on_click(cx.listener(move |this, _, _, cx| this.navigate(route.clone(), cx)))
+        let label: SharedString = label.into();
+        ui::nav_item(
+            colors,
+            SharedString::from(format!("nav-{label}")),
+            Icon::new(icon).small(),
+            label,
+            active,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| this.navigate(route.clone(), cx)))
     }
 
     fn sidebar(&self, colors: &KoyoriColors, cx: &mut Context<Self>) -> impl IntoElement {
-        let main_group = SidebarGroup::new("").children([self.nav_item(
-            Route::MyTasks,
-            t!("app.nav.my_tasks"),
-            IconName::ListTodo,
-            cx,
-        )]);
+        let unread = self.unread_count;
+        let notifications = self
+            .nav_item(
+                Route::Notifications,
+                t!("app.nav.notifications"),
+                IconName::Bell,
+                colors,
+                cx,
+            )
+            .when(unread > 0, |d| d.child(count_pill(unread, colors.danger)));
 
         // Reviews タブや Task 詳細にいる間もどのプロジェクトか分かるよう、
         // route の project で active を決める。
         let current_project = self.current_project();
-        let muted = colors.text_muted;
-        let project_items: Vec<SidebarMenuItem> = self
+        let shell = cx.entity().downgrade();
+        let projects: Vec<AnyElement> = self
             .projects
             .iter()
             .map(|p| {
@@ -787,44 +960,111 @@ impl AppShell {
                     id: p.id,
                     label: p.key.clone(),
                 };
-                let key: SharedString = p.key.clone().into();
-                let show_key = p.name != p.key;
-                SidebarMenuItem::new(p.name.clone())
-                    .icon(IconName::Folder)
-                    .active(current_project == Some(p.id))
-                    .when(show_key, |item| {
-                        item.suffix(move |_, _| {
-                            div().text_xs().text_color(muted).child(key.clone())
+                let (id, menu_shell) = (p.id, shell.clone());
+                let icon = match p.icon_emoji.as_deref().filter(|e| !e.is_empty()) {
+                    Some(emoji) => div().text_sm().child(emoji.to_string()).into_any_element(),
+                    None => Icon::new(IconName::Folder).small().into_any_element(),
+                };
+                ui::nav_item(
+                    colors,
+                    SharedString::from(format!("project-{id}")),
+                    icon,
+                    p.name.clone(),
+                    current_project == Some(p.id),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| this.navigate(route.clone(), cx)))
+                .context_menu(move |menu, _, _| {
+                    let item = |label: &'static str, route: Route| {
+                        let shell = menu_shell.clone();
+                        PopupMenuItem::new(label).on_click(move |_, _, cx| {
+                            let _ = shell.update(cx, |this, cx| this.navigate(route.clone(), cx));
                         })
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| this.navigate(route.clone(), cx)))
+                    };
+                    menu.item(item(t!("app.tab.reviews"), Route::Reviews { project: id }))
+                        .item(item(
+                            t!("app.tab.settings"),
+                            Route::ProjectSettings { project: id },
+                        ))
+                })
+                .into_any_element()
             })
             .collect();
 
-        let unread = self.unread_count;
-        let danger = colors.danger;
-        let notifications = SidebarMenuItem::new(t!("app.nav.notifications"))
-            .icon(IconName::Bell)
-            .active(self.route == Route::Notifications)
-            .suffix(move |_, _| div().when(unread > 0, |d| d.child(count_pill(unread, danger))))
-            .on_click(cx.listener(|this, _, _, cx| this.navigate(Route::Notifications, cx)));
-
         div()
-            .w(px(216.))
+            .id("sidebar")
+            .w(px(220.))
             .flex_shrink_0()
             .h_full()
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .px_2()
+            .py_2()
+            .bg(colors.sidebar)
             .border_r_1()
             .border_color(colors.border)
+            .overflow_y_scroll()
+            .child(self.nav_item(Route::Home, t!("app.nav.home"), IconName::House, colors, cx))
+            .child(self.nav_item(
+                Route::MyTasks,
+                t!("app.nav.my_tasks"),
+                IconName::ListTodo,
+                colors,
+                cx,
+            ))
+            .child(notifications)
             .child(
-                Sidebar::new("sidebar")
-                    .w_full()
-                    .child(main_group)
-                    .child(SidebarGroup::new(t!("app.nav.projects")).children(project_items))
-                    .child(SidebarGroup::new("").child(notifications)),
+                ui::section_heading(colors, t!("app.nav.projects"))
+                    .pt_4()
+                    .px_2()
+                    .child(
+                        Button::new("new-project")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Plus)
+                            .tooltip(t!("app.nav.new_project"))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.create_project(window, cx)),
+                            ),
+                    ),
             )
+            .children(projects)
     }
 
-    fn header(&self, colors: &KoyoriColors, cx: &mut Context<Self>) -> impl IntoElement {
+    /// macOS ではタイトルバーを透明にしてヘッダーに重ねるので、ヘッダーでウィンドウを動かす。
+    /// 左は信号ボタンの分だけ空ける（全画面では出ないので詰める）。
+    fn title_bar_region(&self, el: Div, window: &Window, cx: &mut Context<Self>) -> Div {
+        if !cfg!(target_os = "macos") {
+            return el;
+        }
+        el.when(!window.is_fullscreen(), |d| d.pl(px(84.)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, ev: &MouseDownEvent, window, _| {
+                    if ev.click_count >= 2 {
+                        window.titlebar_double_click();
+                    } else {
+                        this.header_drag = true;
+                    }
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.header_drag = false),
+            )
+            .on_mouse_move(cx.listener(|this, _: &MouseMoveEvent, window, _| {
+                if std::mem::take(&mut this.header_drag) {
+                    window.start_window_move();
+                }
+            }))
+    }
+
+    fn header(
+        &self,
+        colors: &KoyoriColors,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         // §305: テナントは Header で切り替える。UUID ではなく表示名を出す。
         let tenant_id = self.settings.last_tenant_id;
         let tenant_name = self
@@ -845,20 +1085,24 @@ impl AppShell {
             ConnectionStatus::Offline => colors.danger,
         };
 
-        div()
-            .h(px(48.))
+        let online = self.connection == ConnectionStatus::Online;
+        let bar = div()
+            .h(px(44.))
             .flex_shrink_0()
             .flex()
             .items_center()
-            .px_4()
-            .gap_3()
+            .px_3()
+            .gap_1()
             .min_w_0()
+            .bg(colors.sidebar)
             .border_b_1()
-            .border_color(colors.border)
+            .border_color(colors.border);
+        self.title_bar_region(bar, window, cx)
             .child(
                 Button::new("toggle-sidebar")
                     .ghost()
-                    .icon(IconName::Menu)
+                    .small()
+                    .icon(IconName::PanelLeft)
                     .tooltip(t!("app.header.toggle_sidebar"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.sidebar_visible = !this.sidebar_visible;
@@ -867,16 +1111,19 @@ impl AppShell {
             )
             .child(
                 div()
-                    .text_lg()
-                    .font_weight(FontWeight::BOLD)
+                    .px_1()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
                     .child("Koyori"),
             )
+            .child(div().text_sm().text_color(colors.border).child("/"))
             .child(
                 Button::new("tenant-switcher")
                     .ghost()
+                    .small()
                     .tooltip(t!("app.header.switch_tenant"))
                     .label(tenant_name)
-                    .icon(IconName::ChevronDown)
+                    .dropdown_caret(true)
                     .dropdown_menu(move |menu, _, _| {
                         let mut m = menu.min_w(px(180.));
                         for (id, name) in tenant_items.iter().cloned() {
@@ -895,26 +1142,36 @@ impl AppShell {
                     }),
             )
             .child(div().flex_1())
-            // §23 Connection Status
+            // §23 Connection Status。接続中は点だけ、切断中は文言も出す。
             .child(
                 div()
-                    .size(px(8.))
-                    .rounded_full()
-                    .bg(status_color)
-                    .id("connection-status"),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(colors.text_muted)
-                    .child(match self.connection {
-                        ConnectionStatus::Online => t!("app.header.connected"),
-                        ConnectionStatus::Offline => t!("app.header.reconnecting"),
+                    .id("connection-status")
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .px_2()
+                    .child(div().size(px(6.)).rounded_full().bg(status_color))
+                    .when(!online, |d| {
+                        d.child(
+                            div()
+                                .text_xs()
+                                .text_color(colors.text_muted)
+                                .child(t!("app.header.reconnecting")),
+                        )
+                    })
+                    .tooltip(move |window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(if online {
+                            t!("app.header.connected")
+                        } else {
+                            t!("app.header.reconnecting")
+                        })
+                        .build(window, cx)
                     }),
             )
             .child(
                 Button::new("search")
                     .ghost()
+                    .small()
                     .icon(IconName::Search)
                     .tooltip(t!(
                         "app.header.search",
@@ -927,22 +1184,35 @@ impl AppShell {
                     })),
             )
             .child(
-                Button::new("notifications")
-                    .ghost()
-                    .icon(IconName::Bell)
-                    .tooltip(t!("app.header.notifications"))
-                    .label(if self.unread_count > 0 {
-                        self.unread_count.to_string()
-                    } else {
-                        String::new()
-                    })
-                    .on_click(
-                        cx.listener(|this, _, _, cx| this.navigate(Route::Notifications, cx)),
-                    ),
+                div()
+                    .relative()
+                    .child(
+                        Button::new("notifications")
+                            .ghost()
+                            .small()
+                            .icon(IconName::Bell)
+                            .tooltip(t!("app.header.notifications"))
+                            .selected(self.route == Route::Notifications)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.navigate(Route::Notifications, cx)
+                            })),
+                    )
+                    .when(self.unread_count > 0, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .top(px(3.))
+                                .right(px(3.))
+                                .size(px(7.))
+                                .rounded_full()
+                                .bg(colors.danger),
+                        )
+                    }),
             )
             .child(
                 Button::new("settings")
                     .ghost()
+                    .small()
                     .icon(IconName::Settings)
                     .tooltip(t!(
                         "app.header.settings",
@@ -1157,6 +1427,12 @@ impl AppShell {
                     act: PaletteAct::SearchTasks,
                 });
                 v.push(PaletteEntry {
+                    label: t!("app.palette.create_project").into(),
+                    icon: IconName::FolderPlus,
+                    keywords: vec!["project".into()],
+                    act: PaletteAct::CreateProject,
+                });
+                v.push(PaletteEntry {
                     label: t!("app.palette.toggle_sidebar").into(),
                     icon: IconName::Menu,
                     keywords: vec![],
@@ -1186,6 +1462,7 @@ impl AppShell {
                         });
                     }
                 }
+                v.push(nav(t!("app.palette.go_home"), IconName::House, Route::Home));
                 v.push(nav(
                     t!("app.palette.go_my_tasks"),
                     IconName::ListTodo,
@@ -1203,7 +1480,7 @@ impl AppShell {
                 ));
                 for p in &self.projects {
                     v.push(PaletteEntry {
-                        label: format!("{}: Tasks", p.key).into(),
+                        label: t!("app.palette.project_tasks", key = p.key).into(),
                         icon: IconName::Folder,
                         keywords: vec![p.key.clone().into()],
                         act: PaletteAct::Navigate(Route::Project {
@@ -1212,10 +1489,16 @@ impl AppShell {
                         }),
                     });
                     v.push(PaletteEntry {
-                        label: format!("{}: Reviews", p.key).into(),
+                        label: t!("app.palette.project_reviews", key = p.key).into(),
                         icon: IconName::SquareCheck,
                         keywords: vec![p.key.clone().into()],
                         act: PaletteAct::Navigate(Route::Reviews { project: p.id }),
+                    });
+                    v.push(PaletteEntry {
+                        label: t!("app.palette.project_settings", key = p.key).into(),
+                        icon: IconName::FolderCog,
+                        keywords: vec![p.key.clone().into(), "settings".into()],
+                        act: PaletteAct::Navigate(Route::ProjectSettings { project: p.id }),
                     });
                 }
                 v.push(PaletteEntry {
@@ -1298,6 +1581,7 @@ impl AppShell {
                     .update(cx, |l, cx| l.focus_create(window, cx));
             }
             PaletteAct::SearchTasks => self.toggle_palette(PaletteKind::QuickSearch, window, cx),
+            PaletteAct::CreateProject => self.create_project(window, cx),
             PaletteAct::StartReview => self
                 .review_list
                 .update(cx, |l, cx| l.start_review(window, cx)),
@@ -1338,6 +1622,7 @@ impl AppShell {
                 .update(cx, |l, _| l.set_client(client.clone(), tenant));
             self.review_detail
                 .update(cx, |d, _| d.set_client(client.clone(), tenant));
+            self.set_tenant_views(&client, tenant, cx);
             self.bootstrap(client, cx);
         }
         self.navigate(Route::MyTasks, cx);
@@ -1348,28 +1633,32 @@ impl AppShell {
         &self,
         project: uuid::Uuid,
         key: String,
-        tasks_active: bool,
+        selected: usize,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let shell = cx.entity().downgrade();
         TabBar::new("project-tabs")
-            .selected_index(if tasks_active { 0 } else { 1 })
+            .underline()
+            .small()
+            .px_3()
+            .selected_index(selected)
             .child(Tab::new().label(t!("app.tab.tasks")))
             .child(Tab::new().label(t!("app.tab.reviews")))
+            .child(Tab::new().label(t!("app.tab.settings")))
             .on_click(move |index, _, cx| {
-                let route = if *index == 0 {
-                    Route::Project {
+                let route = match *index {
+                    0 => Route::Project {
                         id: project,
                         label: key.clone(),
-                    }
-                } else {
-                    Route::Reviews { project }
+                    },
+                    1 => Route::Reviews { project },
+                    _ => Route::ProjectSettings { project },
                 };
                 let _ = shell.update(cx, |shell, cx| shell.navigate(route, cx));
             })
     }
 
-    fn content(&self, colors: &KoyoriColors, cx: &mut Context<Self>) -> impl IntoElement {
+    fn content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         // feature crate の View が入る場所。
         if self.route == Route::Settings {
             return div()
@@ -1385,6 +1674,20 @@ impl AppShell {
                 .overflow_hidden()
                 .child(self.center.clone());
         }
+        if self.route == Route::Home {
+            return div()
+                .size_full()
+                .min_w_0()
+                .overflow_hidden()
+                .flex()
+                .flex_col()
+                .child(ui::page_header(
+                    &ui::colors(cx),
+                    t!("app.nav.home"),
+                    Some(t!("app.page.home_desc").into()),
+                ))
+                .child(div().flex_1().min_h_0().child(self.home.clone()));
+        }
         // タスク系ルートは全て §15 の一覧を表示。見出しで今どの一覧かを示す。
         let personal = match self.route {
             Route::MyTasks => Some((t!("app.nav.my_tasks"), t!("app.page.my_tasks_desc"))),
@@ -1397,7 +1700,11 @@ impl AppShell {
                 .overflow_hidden()
                 .flex()
                 .flex_col()
-                .child(page_header(colors, title.into(), subtitle.into()))
+                .child(ui::page_header(
+                    &ui::colors(cx),
+                    title,
+                    Some(subtitle.into()),
+                ))
                 .child(div().flex_1().min_h_0().child(self.task_list.clone()));
         }
         // プロジェクト配下は Tasks/Reviews のタブ切替（§14）。
@@ -1411,7 +1718,11 @@ impl AppShell {
                     let project = t!("app.page.project").to_string();
                     (project.clone(), project)
                 });
-            let reviews = matches!(self.route, Route::Reviews { .. });
+            let tab = match self.route {
+                Route::Reviews { .. } => 1,
+                Route::ProjectSettings { .. } => 2,
+                _ => 0,
+            };
             let subtitle = if name == key {
                 t!("app.page.project").to_string()
             } else {
@@ -1423,12 +1734,12 @@ impl AppShell {
                 .overflow_hidden()
                 .flex()
                 .flex_col()
-                .child(page_header(colors, name.into(), subtitle.into()))
-                .child(self.project_tabs(project, key, !reviews, cx))
-                .child(div().flex_1().min_h_0().child(if reviews {
-                    self.review_list.clone().into_any_element()
-                } else {
-                    self.task_list.clone().into_any_element()
+                .child(ui::page_header(&ui::colors(cx), name, Some(subtitle.into())).pb_1())
+                .child(self.project_tabs(project, key, tab, cx))
+                .child(div().flex_1().min_h_0().child(match tab {
+                    1 => self.review_list.clone().into_any_element(),
+                    2 => self.project_settings.clone().into_any_element(),
+                    _ => self.task_list.clone().into_any_element(),
                 }));
         }
         let title: SharedString = match &self.route {
@@ -1546,8 +1857,11 @@ impl AppShell {
     }
 
     fn workspace(&self, colors: &KoyoriColors, cx: &mut Context<Self>) -> AnyElement {
-        if matches!(self.route, Route::Settings | Route::Notifications) {
-            return self.content(colors, cx).into_any_element();
+        if matches!(
+            self.route,
+            Route::Settings | Route::Notifications | Route::Home | Route::ProjectSettings { .. }
+        ) {
+            return self.content(cx).into_any_element();
         }
         let review = matches!(self.route, Route::Reviews { .. });
         h_resizable(if review {
@@ -1584,7 +1898,7 @@ impl AppShell {
         .child(
             resizable_panel()
                 .size_range(px(240.)..Pixels::MAX)
-                .child(self.content(colors, cx)),
+                .child(self.content(cx)),
         )
         .child(
             resizable_panel()
@@ -1646,9 +1960,13 @@ impl Render for AppShell {
                 });
             })
             .when(self.client.is_none(), |d| {
-                d.child(self.login_view(&colors, cx))
+                // 未ログインでもウィンドウを動かせるよう、ヘッダーの高さだけ掴める帯を置く。
+                d.child(self.title_bar_region(div().h(px(44.)).flex_shrink_0(), window, cx))
+                    .child(self.login_view(&colors, cx))
             })
-            .when(self.client.is_some(), |d| d.child(self.header(&colors, cx)))
+            .when(self.client.is_some(), |d| {
+                d.child(self.header(&colors, window, cx))
+            })
             .when(self.client.is_some(), |d| {
                 d.child(
                     div()
@@ -1674,32 +1992,6 @@ impl Render for AppShell {
             .children(Root::render_dialog_layer(window, cx))
             .children(Root::render_sheet_layer(window, cx))
     }
-}
-
-/// Content 上部の見出し。今どの一覧を見ているかを常に示す。
-fn page_header(colors: &KoyoriColors, title: SharedString, subtitle: SharedString) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .flex_shrink_0()
-        .gap_0p5()
-        .px_4()
-        .pt_3()
-        .pb_2()
-        .child(
-            div()
-                .text_lg()
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_ellipsis()
-                .child(title),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(colors.text_muted)
-                .text_ellipsis()
-                .child(subtitle),
-        )
 }
 
 /// 未読数の赤いピル。gpui-kit の `Badge` は子要素の角に重ねる部品で、

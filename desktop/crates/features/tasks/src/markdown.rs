@@ -160,24 +160,19 @@ impl MarkdownBlocks {
     pub fn render(&self, id: &str, cx: &App) -> impl IntoElement {
         // エディタは内容の高さに合わせる（行の高さはフォントの 1.5 倍）。
         let line_height = Theme::global(cx).mono_font_size * 1.5;
-        div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .w_full()
-            .children(self.parts.iter().enumerate().map(|(ix, part)| {
-                match part {
-                    Part::Text(text) => {
-                        TextView::markdown(SharedString::from(format!("{id}-{ix}")), text.clone())
-                            .w_full()
-                            .into_any_element()
-                    }
-                    Part::Code { editor, lines } => Editor::new(editor)
-                        .readonly(true)
-                        .h(line_height * *lines as f32 + px(CODE_PADDING))
-                        .into_any_element(),
+        div().flex().flex_col().gap_3().w_full().text_sm().children(
+            self.parts.iter().enumerate().map(|(ix, part)| match part {
+                Part::Text(text) => {
+                    TextView::markdown(SharedString::from(format!("{id}-{ix}")), text.clone())
+                        .w_full()
+                        .into_any_element()
                 }
-            }))
+                Part::Code { editor, lines } => Editor::new(editor)
+                    .readonly(true)
+                    .h(line_height * *lines as f32 + px(CODE_PADDING))
+                    .into_any_element(),
+            }),
+        )
     }
 }
 

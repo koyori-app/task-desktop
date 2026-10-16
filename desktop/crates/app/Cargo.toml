@@ -6,6 +6,7 @@ license.workspace = true
 [dependencies]
 i18n = { path = "../i18n" }
 gpui-kit.workspace = true
+ui = { path = "../ui" }
 api = { path = "../api" }
 core = { path = "../core" }
 platform = { path = "../platform" }
@@ -13,6 +14,7 @@ feature-notifications = { path = "../features/notifications" }
 feature-tasks = { path = "../features/tasks" }
 feature-reviews = { path = "../features/reviews" }
 feature-settings = { path = "../features/settings" }
+feature-projects = { path = "../features/projects" }
 uuid = { version = "1", features = ["serde", "v4"] }
 serde_json = "1"
 futures = "0.3"

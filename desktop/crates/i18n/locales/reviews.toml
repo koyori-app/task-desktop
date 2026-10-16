@@ -10,6 +10,8 @@
 "list.untitled" = { ja = "無題のプルリクエスト", en = "Untitled pull request" }
 "list.unknown_author" = { ja = "作成者不明", en = "Unknown author" }
 "list.meta" = { ja = "{author} · {rounds} ラウンド · {time}", en = "{author} · {rounds} rounds · {time}" }
+"list.blocking_badge" = { ja = "ブロッキング {count}", en = "{count} blocking" }
+"list.unresolved_badge" = { ja = "未解決 {count}", en = "{count} unresolved" }
 "list.counts" = { ja = "未解決 {unresolved} · ブロッキング {blocking}", en = "{unresolved} unresolved · {blocking} blocking" }
 
 # レビュー作成フォーム
@@ -85,3 +87,12 @@
 "action.defer" = { ja = "保留にする", en = "Defer" }
 "action.reject" = { ja = "却下する", en = "Reject" }
 "action.open_task" = { ja = "タスクを開く", en = "Open deferred task" }
+
+# 絞り込み・コピー
+"filter.all" = { ja = "すべて {count}", en = "All {count}" }
+"filter.any_severity" = { ja = "重大度: すべて", en = "Any severity" }
+"detail.copy" = { ja = "コピー", en = "Copy" }
+"detail.copied" = { ja = "コピーしました", en = "Copied" }
+"list.search_placeholder" = { ja = "PR を検索", en = "Search PRs" }
+"list.unresolved_only" = { ja = "未解決のみ", en = "Unresolved only" }
+"list.no_match" = { ja = "条件に合うプルリクエストはありません", en = "No pull requests match" }

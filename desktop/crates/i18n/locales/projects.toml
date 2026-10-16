@@ -1,0 +1,234 @@
+# プロジェクト設定・ホーム・プロジェクト作成の表示文字列。キーは "projects.<key>"。
+# 1 行 1 キーで ja / en を並べる。引数は {name} で埋め込む。
+
+"title" = { ja = "プロジェクト設定", en = "Project settings" }
+"select_project" = { ja = "プロジェクトを選んでください", en = "Select a project" }
+
+"section.overview" = { ja = "概要", en = "Overview" }
+"section.members" = { ja = "メンバー", en = "Members" }
+"section.statuses" = { ja = "ステータス", en = "Statuses" }
+"section.labels" = { ja = "ラベル", en = "Labels" }
+"section.milestones" = { ja = "マイルストーン", en = "Milestones" }
+"section.sprints" = { ja = "スプリント", en = "Sprints" }
+"section.fields" = { ja = "カスタムフィールド", en = "Custom fields" }
+"section.notifications" = { ja = "通知", en = "Notifications" }
+"section.github" = { ja = "GitHub", en = "GitHub" }
+
+"common.add" = { ja = "追加", en = "Add" }
+"common.save" = { ja = "保存", en = "Save" }
+"common.saved" = { ja = "保存しました", en = "Saved" }
+"common.cancel" = { ja = "キャンセル", en = "Cancel" }
+"common.confirm" = { ja = "実行", en = "Confirm" }
+"common.edit" = { ja = "編集", en = "Edit" }
+"common.delete" = { ja = "削除", en = "Delete" }
+"common.name" = { ja = "名前", en = "Name" }
+"common.description" = { ja = "説明", en = "Description" }
+"common.color" = { ja = "色", en = "Color" }
+"common.loading" = { ja = "読み込み中…", en = "Loading…" }
+"common.name_required" = { ja = "名前を入力してください", en = "Enter a name" }
+"common.pick_date" = { ja = "日付を選択", en = "Pick a date" }
+"common.move_up" = { ja = "上へ", en = "Move up" }
+"common.move_down" = { ja = "下へ", en = "Move down" }
+
+"overview.name" = { ja = "名前", en = "Name" }
+"overview.name_ph" = { ja = "プロジェクト名", en = "Project name" }
+"overview.name_required" = { ja = "プロジェクト名を入力してください", en = "Enter a project name" }
+"overview.emoji" = { ja = "アイコン", en = "Icon" }
+"overview.emoji_ph" = { ja = "🚀", en = "🚀" }
+"overview.description" = { ja = "説明", en = "Description" }
+"overview.description_ph" = { ja = "このプロジェクトの目的や範囲", en = "What this project is about" }
+"overview.key" = { ja = "キー", en = "Key" }
+"overview.key_desc" = { ja = "タスク番号の接頭辞（例: KEY-12）。作成後は変更できません。", en = "Prefix of task numbers (e.g. KEY-12). Cannot be changed after creation." }
+"overview.personal" = { ja = "個人", en = "Personal" }
+"overview.danger" = { ja = "危険な操作", en = "Danger zone" }
+"overview.delete" = { ja = "プロジェクトを削除", en = "Delete project" }
+"overview.delete_desc" = { ja = "タスク・レビューを含むすべてが削除されます。確認のためキー {key} を入力してください。", en = "Everything in it, including tasks and reviews, is deleted. Type the key {key} to confirm." }
+"overview.delete_ph" = { ja = "キーを入力", en = "Type the key" }
+"overview.deleted" = { ja = "プロジェクトを削除しました", en = "Project deleted" }
+
+"members.add" = { ja = "メンバーを追加", en = "Add member" }
+"members.add_desc" = { ja = "テナントのメンバーから選びます（権限はメンバー）", en = "Pick from tenant members (added as Member)" }
+"members.no_candidates" = { ja = "追加できるテナントメンバーがいません", en = "No tenant members to add" }
+"members.empty" = { ja = "メンバーはいません", en = "No members" }
+"members.remove" = { ja = "プロジェクトから外す", en = "Remove from project" }
+"members.remove_title" = { ja = "{name} をプロジェクトから外しますか？", en = "Remove {name} from the project?" }
+"members.remove_desc" = { ja = "テナント全体の権限で見えている場合は引き続き閲覧できます。", en = "They can still see it if their tenant role allows." }
+"members.role_admin" = { ja = "管理者", en = "Admin" }
+"members.role_member" = { ja = "メンバー", en = "Member" }
+"members.role_viewer" = { ja = "閲覧者", en = "Viewer" }
+
+"statuses.new" = { ja = "ステータスを追加", en = "New status" }
+"statuses.edit" = { ja = "ステータスを編集", en = "Edit status" }
+"statuses.name_ph" = { ja = "例: レビュー待ち", en = "e.g. In review" }
+"statuses.done_state" = { ja = "完了扱いにする", en = "Counts as done" }
+"statuses.empty" = { ja = "ステータスはありません", en = "No statuses" }
+"statuses.default" = { ja = "既定", en = "Default" }
+"statuses.done" = { ja = "完了", en = "Done" }
+"statuses.default_done" = { ja = "既定の完了", en = "Default done" }
+"statuses.set_default" = { ja = "新しいタスクの既定にする", en = "Use for new tasks" }
+"statuses.set_default_done" = { ja = "完了にする時の既定にする", en = "Use when completing tasks" }
+"statuses.delete_move" = { ja = "削除してタスクを「{name}」へ移す", en = "Delete and move tasks to “{name}”" }
+"statuses.delete_title" = { ja = "ステータス「{name}」を削除しますか？", en = "Delete the status “{name}”?" }
+"statuses.delete_desc" = { ja = "このステータスのタスクは「{target}」へ移ります。", en = "Its tasks move to “{target}”." }
+
+"labels.new" = { ja = "ラベルを追加", en = "New label" }
+"labels.edit" = { ja = "ラベルを編集", en = "Edit label" }
+"labels.name_ph" = { ja = "例: バグ", en = "e.g. bug" }
+"labels.description_ph" = { ja = "どんな時に付けるか", en = "When to use it" }
+"labels.empty" = { ja = "ラベルはありません", en = "No labels" }
+"labels.export" = { ja = "コピー", en = "Copy" }
+"labels.export_desc" = { ja = "ラベルを JSON でクリップボードへコピーします", en = "Copy labels to the clipboard as JSON" }
+"labels.exported" = { ja = "{count} 件のラベルをコピーしました", en = "Copied {count} labels" }
+"labels.import" = { ja = "貼り付け", en = "Paste" }
+"labels.import_desc" = { ja = "クリップボードの JSON からラベルを取り込みます（同名は飛ばします）", en = "Import labels from JSON on the clipboard (same names are skipped)" }
+"labels.import_invalid" = { ja = "クリップボードにラベルの JSON がありません", en = "The clipboard does not contain label JSON" }
+"labels.imported" = { ja = "{count} 件のラベルを取り込みました", en = "Imported {count} labels" }
+"labels.delete_title" = { ja = "ラベル「{name}」を削除しますか？", en = "Delete the label “{name}”?" }
+"labels.delete_desc" = { ja = "付いているタスクからも外れます。", en = "It is also removed from tasks." }
+
+"milestones.new" = { ja = "マイルストーンを追加", en = "New milestone" }
+"milestones.edit" = { ja = "マイルストーンを編集", en = "Edit milestone" }
+"milestones.name_ph" = { ja = "例: v1.0 リリース", en = "e.g. v1.0 release" }
+"milestones.description_ph" = { ja = "到達条件など", en = "What reaching it means" }
+"milestones.due" = { ja = "期日", en = "Due date" }
+"milestones.due_required" = { ja = "期日を選んでください", en = "Pick a due date" }
+"milestones.empty" = { ja = "マイルストーンはありません", en = "No milestones" }
+"milestones.progress" = { ja = "{pct}% · {done}/{total} 件完了", en = "{pct}% · {done}/{total} done" }
+"milestones.delete_title" = { ja = "マイルストーン「{name}」を削除しますか？", en = "Delete the milestone “{name}”?" }
+"milestones.delete_desc" = { ja = "タスクは残り、マイルストーンの指定だけが外れます。", en = "Tasks stay; only their milestone is cleared." }
+
+"sprints.new" = { ja = "スプリントを追加", en = "New sprint" }
+"sprints.edit" = { ja = "スプリントを編集", en = "Edit sprint" }
+"sprints.name_ph" = { ja = "例: Sprint 12", en = "e.g. Sprint 12" }
+"sprints.goal" = { ja = "ゴール", en = "Goal" }
+"sprints.goal_ph" = { ja = "このスプリントで達成すること", en = "What this sprint should achieve" }
+"sprints.start" = { ja = "開始日", en = "Start" }
+"sprints.end" = { ja = "終了日", en = "End" }
+"sprints.dates_required" = { ja = "開始日と終了日を選んでください", en = "Pick a start and end date" }
+"sprints.dates_order" = { ja = "終了日は開始日以降にしてください", en = "The end date must not be before the start date" }
+"sprints.empty" = { ja = "スプリントはありません", en = "No sprints" }
+"sprints.planning" = { ja = "計画中", en = "Planning" }
+"sprints.active" = { ja = "進行中", en = "Active" }
+"sprints.completed" = { ja = "完了", en = "Completed" }
+"sprints.start_action" = { ja = "開始", en = "Start" }
+"sprints.complete_action" = { ja = "完了", en = "Complete" }
+"sprints.complete_backlog" = { ja = "完了して未完了のタスクをバックログへ戻す", en = "Complete and move unfinished tasks to the backlog" }
+"sprints.complete_move" = { ja = "完了して未完了のタスクを「{name}」へ移す", en = "Complete and move unfinished tasks to “{name}”" }
+"sprints.complete_title" = { ja = "スプリント「{name}」を完了しますか？", en = "Complete the sprint “{name}”?" }
+"sprints.counts" = { ja = "完了 {done} · 進行中 {progress} · 全 {total} 件", en = "{done} done · {progress} in progress · {total} total" }
+"sprints.delete_title" = { ja = "スプリント「{name}」を削除しますか？", en = "Delete the sprint “{name}”?" }
+"sprints.delete_desc" = { ja = "タスクは残り、スプリントの指定だけが外れます。", en = "Tasks stay; only their sprint is cleared." }
+
+"fields.new" = { ja = "フィールドを追加", en = "New field" }
+"fields.edit" = { ja = "フィールドを編集", en = "Edit field" }
+"fields.name_ph" = { ja = "例: 見積もりポイント", en = "e.g. Story points" }
+"fields.type" = { ja = "種類", en = "Type" }
+"fields.type_text" = { ja = "テキスト", en = "Text" }
+"fields.type_number" = { ja = "数値", en = "Number" }
+"fields.type_select" = { ja = "選択", en = "Select" }
+"fields.type_date" = { ja = "日付", en = "Date" }
+"fields.type_url" = { ja = "URL", en = "URL" }
+"fields.type_checkbox" = { ja = "チェックボックス", en = "Checkbox" }
+"fields.options" = { ja = "選択肢（カンマ区切り）", en = "Options (comma separated)" }
+"fields.options_ph" = { ja = "高, 中, 低", en = "High, Medium, Low" }
+"fields.options_required" = { ja = "選択肢を 1 つ以上入力してください", en = "Enter at least one option" }
+"fields.required" = { ja = "必須", en = "Required" }
+"fields.empty" = { ja = "カスタムフィールドはありません", en = "No custom fields" }
+"fields.delete_title" = { ja = "フィールド「{name}」を削除しますか？", en = "Delete the field “{name}”?" }
+"fields.delete_desc" = { ja = "タスクに入力された値も消えます。", en = "Values entered on tasks are deleted too." }
+
+"notify.desc" = { ja = "このプロジェクトで自分宛てに記録するイベントです。アプリ内通知が OFF のイベントは通知センターと OS 通知に届きません。", en = "Events recorded for you in this project. Events with in-app off never reach the Notification Center or OS notifications." }
+"notify.unavailable" = { ja = "通知設定を読み込めませんでした", en = "Could not load notification settings" }
+"notify.event" = { ja = "イベント", en = "Event" }
+"notify.in_app" = { ja = "アプリ内", en = "In-app" }
+"notify.email" = { ja = "メール", en = "Email" }
+"notify.assigned" = { ja = "担当になった", en = "Assigned" }
+"notify.assigned_desc" = { ja = "タスクの担当者に追加されたとき", en = "You are added as an assignee" }
+"notify.mentioned" = { ja = "メンション", en = "Mentioned" }
+"notify.mentioned_desc" = { ja = "コメントで @ メンションされたとき", en = "You are @mentioned in a comment" }
+"notify.status_changed" = { ja = "ステータス変更", en = "Status changed" }
+"notify.status_changed_desc" = { ja = "関係するタスクのステータスが変わったとき", en = "The status of a task you follow changes" }
+"notify.comment_added" = { ja = "コメント", en = "Comment added" }
+"notify.comment_added_desc" = { ja = "関係するタスクにコメントが付いたとき", en = "Someone comments on a task you follow" }
+"notify.deadline_soon" = { ja = "期限が近い", en = "Deadline soon" }
+"notify.deadline_soon_desc" = { ja = "担当タスクの期限が近づいたとき", en = "A task you own is about to be due" }
+"notify.pr_merged" = { ja = "PR のマージ", en = "PR merged" }
+"notify.pr_merged_desc" = { ja = "タスクに紐づく PR がマージされたとき", en = "A PR linked to a task is merged" }
+"notify.review_round_created" = { ja = "レビューラウンド", en = "Review round" }
+"notify.review_round_created_desc" = { ja = "関係する PR に新しいレビューラウンドが出たとき", en = "A new review round is posted on a PR you are involved in" }
+"notify.review_finding_changed" = { ja = "指摘の状態変更", en = "Finding changed" }
+"notify.review_finding_changed_desc" = { ja = "指摘が修正・確認・保留・却下されたとき", en = "A finding is fixed, verified, deferred or rejected" }
+"notify.review_round_any" = { ja = "すべてのレビューラウンド", en = "All review rounds" }
+"notify.review_round_any_desc" = { ja = "関係しない PR も含め、このプロジェクトの全ラウンドを受け取る", en = "Receive every round in this project, even on PRs you are not part of" }
+
+"github.connected" = { ja = "連携中", en = "Connected" }
+"github.not_connected" = { ja = "未連携", en = "Not connected" }
+"github.no_repo" = { ja = "リポジトリ未選択", en = "No repository" }
+"github.connected_at" = { ja = "{at} に連携", en = "Connected {at}" }
+"github.connect_desc" = { ja = "GitHub App をインストールすると、PR のレビューと Issue の取り込みが使えます。", en = "Install the GitHub App to use PR reviews and issue import." }
+"github.connect" = { ja = "GitHub で連携", en = "Connect on GitHub" }
+"github.reconnect" = { ja = "GitHub で設定", en = "Configure on GitHub" }
+"github.opened" = { ja = "ブラウザで GitHub を開きました。完了後にこの画面を開き直してください。", en = "Opened GitHub in your browser. Reopen this page when you are done." }
+"github.unavailable" = { ja = "連携状態を読み込めませんでした", en = "Could not load the integration status" }
+"github.hint_title" = { ja = "リポジトリの選択", en = "Choosing a repository" }
+"github.hint" = { ja = "インストール後のリポジトリ選択と Issue の取り込みは Web で行います。", en = "Pick the repository and import issues on the web after installing." }
+
+"create.title" = { ja = "新しいプロジェクト", en = "New project" }
+"create.name" = { ja = "名前", en = "Name" }
+"create.name_ph" = { ja = "プロジェクト名", en = "Project name" }
+"create.name_required" = { ja = "プロジェクト名を入力してください", en = "Enter a project name" }
+"create.key" = { ja = "キー（任意）", en = "Key (optional)" }
+"create.key_ph" = { ja = "例: WEB", en = "e.g. WEB" }
+"create.key_hint" = { ja = "タスク番号の接頭辞。空なら名前から自動で決まります。後から変更できません。", en = "Prefix of task numbers. Derived from the name when empty. Cannot be changed later." }
+"create.description" = { ja = "説明（任意）", en = "Description (optional)" }
+"create.description_ph" = { ja = "このプロジェクトの目的", en = "What this project is for" }
+"create.submit" = { ja = "作成", en = "Create" }
+"create.creating" = { ja = "作成中…", en = "Creating…" }
+
+"home.title" = { ja = "ホーム", en = "Home" }
+"home.refresh" = { ja = "再読み込み", en = "Refresh" }
+"home.open" = { ja = "未完了", en = "Open" }
+"home.today" = { ja = "今日", en = "Today" }
+"home.overdue" = { ja = "期限切れ", en = "Overdue" }
+"home.week" = { ja = "今週", en = "This week" }
+"home.completed_week" = { ja = "今週の完了", en = "Done this week" }
+"home.filter_today" = { ja = "今日", en = "Today" }
+"home.filter_week" = { ja = "今週", en = "This week" }
+"home.filter_overdue" = { ja = "期限切れ", en = "Overdue" }
+"home.filter_all" = { ja = "すべて", en = "All" }
+"home.no_tasks" = { ja = "該当する未完了のタスクはありません", en = "No open tasks here" }
+"home.more" = { ja = "さらに {count} 件を表示", en = "Show {count} more" }
+"home.projects" = { ja = "プロジェクトの進捗", en = "Project progress" }
+"home.no_projects" = { ja = "プロジェクトはありません", en = "No projects" }
+"home.activity" = { ja = "最近の更新", en = "Recent activity" }
+"home.no_activity" = { ja = "最近の更新はありません", en = "No recent activity" }
+"home.completed_history" = { ja = "完了の推移", en = "Completed per day" }
+"home.no_history" = { ja = "まだ完了したタスクはありません", en = "Nothing completed yet" }
+"home.history_total" = { ja = "計 {count} 件", en = "{count} total" }
+
+"time.just_now" = { ja = "たった今", en = "just now" }
+"time.minutes" = { ja = "{n} 分前", en = "{n} min ago" }
+"time.hours" = { ja = "{n} 時間前", en = "{n} h ago" }
+
+"activity.task_created" = { ja = "タスクを作成しました", en = "created the task" }
+"activity.github_imported" = { ja = "GitHub Issue からタスクを作成しました", en = "created the task from a GitHub issue" }
+"activity.github_synced" = { ja = "GitHub Issue からタスクを同期しました", en = "synced the task from a GitHub issue" }
+"activity.status" = { ja = "ステータスを変更しました", en = "changed the status" }
+"activity.status_to" = { ja = "ステータスを {to} に変更しました", en = "changed the status to {to}" }
+"activity.priority" = { ja = "優先度を変更しました", en = "changed the priority" }
+"activity.priority_to" = { ja = "優先度を {to} に変更しました", en = "changed the priority to {to}" }
+"activity.deadline_to" = { ja = "期限を {to} に変更しました", en = "set the due date to {to}" }
+"activity.deadline_cleared" = { ja = "期限を外しました", en = "cleared the due date" }
+"activity.hard_deadline_to" = { ja = "ハード期限を {to} に変更しました", en = "set the hard deadline to {to}" }
+"activity.hard_deadline_cleared" = { ja = "ハード期限を外しました", en = "cleared the hard deadline" }
+"activity.assignee_added" = { ja = "担当者を追加しました", en = "added an assignee" }
+"activity.assignee_removed" = { ja = "担当者を外しました", en = "removed an assignee" }
+"activity.relation_added" = { ja = "関連タスクを追加しました", en = "added a related task" }
+"activity.relation_removed" = { ja = "関連タスクを外しました", en = "removed a related task" }
+"activity.comment_added" = { ja = "コメントしました", en = "commented" }
+"activity.comment_edited" = { ja = "コメントを編集しました", en = "edited a comment" }
+"activity.comment_deleted" = { ja = "コメントを削除しました", en = "deleted a comment" }
+"activity.archived" = { ja = "タスクをアーカイブしました", en = "archived the task" }
+"activity.commit_linked" = { ja = "コミット {sha} を紐づけました", en = "linked commit {sha}" }
+"activity.other" = { ja = "操作しました", en = "made a change" }
+"activity.system" = { ja = "システム", en = "System" }

@@ -1,41 +1,10 @@
 //! §21 Theme。Koyori のセマンティックトークンを一箇所に集約する。
 //! Feature は色を直書きせず [`colors`] から取る。
 
-use gpui_kit::component::{Theme, ThemeMode};
+use gpui_kit::component::{Theme, ThemeMode, ThemeTokens};
 use gpui_kit::{App, Hsla, Window, rgb};
 
-/// desktop.md §21 のトークン名に合わせた面。
-/// 実体は gpui-component の Theme / SemanticThemeTokens。
-#[allow(dead_code)] // feature が全フィールドを使うまで警告を止める
-#[derive(Debug, Clone, Copy)]
-pub struct KoyoriColors {
-    pub background: Hsla,
-    pub surface: Hsla,
-    pub text: Hsla,
-    pub text_muted: Hsla,
-    pub border: Hsla,
-    pub accent: Hsla,
-    pub success: Hsla,
-    pub warning: Hsla,
-    pub danger: Hsla,
-}
-
-/// 現在のテーマからトークンを取る。
-pub fn colors(cx: &App) -> KoyoriColors {
-    let theme = Theme::global(cx);
-    let c = theme.semantic_tokens().colors;
-    KoyoriColors {
-        background: c.background,
-        surface: c.surface,
-        text: c.foreground,
-        text_muted: c.muted_foreground,
-        border: c.border,
-        accent: theme.primary,
-        success: theme.success,
-        warning: theme.warning,
-        danger: theme.danger,
-    }
-}
+pub use ui::{Colors as KoyoriColors, colors};
 
 /// Settings の Appearance を gpui-kit のテーマへ適用する。
 /// `System` は現在の OS 外観に解決する（変化の追従は window 側で
@@ -57,8 +26,59 @@ pub fn apply(appearance: core::settings::Appearance, window: Option<&mut Window>
     theme.link = link.into();
     theme.link_hover = link.into();
     theme.link_active = link.into();
+    refine(theme, mode.is_dark());
     Theme::sync_base(cx);
     if let Some(window) = window {
         window.refresh();
     }
+}
+
+/// 既定（shadcn neutral）を落ち着いた配色へ寄せる。境界線は背景に近づけ、
+/// サイドバーは本文より一段だけ違う面にし、ホバー・選択は前景色を薄く敷く。
+fn refine(theme: &mut Theme, dark: bool) {
+    let hex = |v: u32| -> Hsla { rgb(v).into() };
+    let (background, sidebar, surface, border, secondary, muted) = if dark {
+        (
+            hex(0x151515),
+            hex(0x1a1a1a),
+            hex(0x1e1e1e),
+            hex(0x2a2a2a),
+            hex(0x262626),
+            hex(0x9a9a9a),
+        )
+    } else {
+        (
+            hex(0xfbfbfb),
+            hex(0xf3f3f3),
+            hex(0xffffff),
+            hex(0xe6e6e6),
+            hex(0xededed),
+            hex(0x6b6b6b),
+        )
+    };
+    let fg = theme.foreground;
+    let (hover, selected) = if dark { (0.06, 0.1) } else { (0.04, 0.07) };
+    theme.background = background;
+    theme.sidebar = sidebar;
+    theme.sidebar_border = border;
+    theme.sidebar_accent = fg.opacity(selected);
+    theme.popover = surface;
+    theme.border = border;
+    theme.input = border;
+    theme.secondary = secondary;
+    theme.secondary_hover = fg.opacity(hover + 0.04);
+    theme.muted = secondary;
+    theme.muted_foreground = muted;
+    theme.colors.list = background;
+    theme.list_hover = fg.opacity(hover);
+    theme.list_active = fg.opacity(selected);
+    theme.list_active_border = border;
+    theme.table_hover = fg.opacity(hover);
+    theme.table_row_border = border;
+    theme.tab_bar = background;
+    theme.title_bar = background;
+    theme.title_bar_border = border;
+    theme.group_box = surface;
+    theme.accordion = background;
+    theme.tokens = ThemeTokens::from(&theme.colors);
 }

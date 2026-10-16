@@ -1,6 +1,6 @@
 //! 一覧行の正規化モデル。MyTaskItem / TaskResponse の両方から作る。
 
-use api::types::{LabelResponse, MyTaskItem, TaskPriority, TaskResponse};
+use api::types::{CreateTaskRequest, LabelResponse, MyTaskItem, TaskPriority, TaskResponse};
 use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
 use gpui_kit::Hsla;
 use i18n::t;
@@ -96,6 +96,30 @@ impl TaskRow {
     }
 }
 
+/// 最小限の作成リクエスト（他の項目は作成後に詳細で設定する）。
+pub fn create_request(
+    title: String,
+    status_id: Uuid,
+    parent_task_id: Option<Uuid>,
+) -> CreateTaskRequest {
+    CreateTaskRequest {
+        title,
+        status_id,
+        assignees: vec![],
+        custom_field_values: vec![],
+        description: None,
+        estimated_minutes: None,
+        hard_deadline: None,
+        label_ids: vec![],
+        milestone_id: None,
+        parent_task_id,
+        priority: None,
+        progress_pct: None,
+        soft_deadline: None,
+        sprint_id: None,
+    }
+}
+
 /// status.color は "#rrggbb" 文字列。パース失敗時は None。
 pub fn parse_hex_color(s: &str) -> Option<gpui_kit::Hsla> {
     let h = s.trim().trim_start_matches('#');
@@ -160,9 +184,160 @@ pub fn due_timestamp(date: NaiveDate, timezone: &impl TimeZone) -> Option<DateTi
         .map(|date| date.with_timezone(&Utc))
 }
 
+/// 作業時間の入力（`90` / `1h` / `1h30m` / `45m` / `1.5h`）を分にする。0 以下や不正は None。
+pub fn parse_minutes(input: &str) -> Option<i32> {
+    let s = input.trim().to_lowercase().replace(' ', "");
+    if s.is_empty() {
+        return None;
+    }
+    if let Ok(n) = s.parse::<i32>() {
+        return (n > 0).then_some(n);
+    }
+    let (hours, rest) = match s.split_once('h') {
+        Some((h, rest)) => (h.parse::<f64>().ok()?, rest),
+        None => (0.0, s.as_str()),
+    };
+    let minutes = match rest.strip_suffix('m').unwrap_or(rest) {
+        "" => 0.0,
+        m => m.parse::<f64>().ok()?,
+    };
+    let total = (hours * 60.0 + minutes).round();
+    (total > 0.0 && total < i32::MAX as f64).then_some(total as i32)
+}
+
+/// 分を `1h 30m` / `45m` で出す。
+pub fn format_minutes(minutes: i32) -> String {
+    let (h, m) = (minutes / 60, minutes % 60);
+    match (h, m) {
+        (0, m) => format!("{m}m"),
+        (h, 0) => format!("{h}h"),
+        (h, m) => format!("{h}h {m}m"),
+    }
+}
+
+/// 検索のハイライト（`<b>` 等のタグ付き）からタグを除く。
+pub fn strip_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// 履歴 1 件の文言（Web の `activityText` と同じ規則）。未知の種別も落とさない。
+pub fn activity_text(event_type: &str, payload: &serde_json::Value) -> String {
+    let s = |key: &str| {
+        payload
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+    };
+    match event_type {
+        "task_created" => t!("tasks.activity.created").into(),
+        "github_issue_imported" | "github_issue_synced" => {
+            let source = match (
+                s("repo_owner"),
+                s("repo_name"),
+                payload.get("issue_number").and_then(|v| v.as_i64()),
+            ) {
+                (Some(owner), Some(repo), Some(n)) if n > 0 => format!("{owner}/{repo}#{n}"),
+                _ => "GitHub".into(),
+            };
+            if event_type == "github_issue_imported" {
+                t!("tasks.activity.github_imported", source = source)
+            } else {
+                t!("tasks.activity.github_synced", source = source)
+            }
+        }
+        "status_changed" => match s("to") {
+            Some(to) => t!("tasks.activity.status_to", to = to),
+            None => t!("tasks.activity.status").into(),
+        },
+        "priority_changed" => match s("to") {
+            Some(to) => t!("tasks.activity.priority_to", to = to),
+            None => t!("tasks.activity.priority").into(),
+        },
+        "deadline_changed" => {
+            let field = if s("field").as_deref() == Some("hard_deadline") {
+                t!("tasks.activity.hard_deadline")
+            } else {
+                t!("tasks.activity.deadline")
+            };
+            match s("to") {
+                Some(to) => t!(
+                    "tasks.activity.deadline_to",
+                    field = field,
+                    to = to.chars().take(10).collect::<String>()
+                ),
+                None => t!("tasks.activity.deadline_cleared", field = field),
+            }
+        }
+        "assignee_added" => t!("tasks.activity.assignee_added").into(),
+        "assignee_removed" => t!("tasks.activity.assignee_removed").into(),
+        "relation_added" => t!("tasks.activity.relation_added").into(),
+        "relation_removed" => t!("tasks.activity.relation_removed").into(),
+        "comment_added" => t!("tasks.activity.comment_added").into(),
+        "comment_edited" => t!("tasks.activity.comment_edited").into(),
+        "comment_deleted" => t!("tasks.activity.comment_deleted").into(),
+        "archived" => t!("tasks.activity.archived").into(),
+        "forge_commit_linked" => {
+            let sha: String = s("sha").unwrap_or_default().chars().take(7).collect();
+            t!(
+                "tasks.activity.commit",
+                sha = sha,
+                message = s("message").unwrap_or_default()
+            )
+        }
+        _ => t!("tasks.activity.unknown").into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_minutes_accepts_hours_and_minutes() {
+        assert_eq!(parse_minutes("90"), Some(90));
+        assert_eq!(parse_minutes("1h"), Some(60));
+        assert_eq!(parse_minutes("1h30m"), Some(90));
+        assert_eq!(parse_minutes(" 1H 30M "), Some(90));
+        assert_eq!(parse_minutes("45m"), Some(45));
+        assert_eq!(parse_minutes("1.5h"), Some(90));
+        assert_eq!(parse_minutes("0"), None);
+        assert_eq!(parse_minutes("-5"), None);
+        assert_eq!(parse_minutes("abc"), None);
+        assert_eq!(parse_minutes(""), None);
+        assert_eq!(format_minutes(90), "1h 30m");
+        assert_eq!(format_minutes(45), "45m");
+        assert_eq!(format_minutes(120), "2h");
+    }
+
+    #[test]
+    fn strip_tags_and_activity_text() {
+        assert_eq!(strip_tags("a <b>bug</b> here"), "a bug here");
+        let unknown = activity_text("nope", &serde_json::json!({}));
+        assert_eq!(unknown, t!("tasks.activity.unknown"));
+        let status = activity_text("status_changed", &serde_json::json!({"to": "Done"}));
+        assert_eq!(status, t!("tasks.activity.status_to", to = "Done"));
+        let cleared = activity_text(
+            "deadline_changed",
+            &serde_json::json!({"field": "hard_deadline"}),
+        );
+        assert_eq!(
+            cleared,
+            t!(
+                "tasks.activity.deadline_cleared",
+                field = t!("tasks.activity.hard_deadline")
+            )
+        );
+    }
 
     #[test]
     fn hex_color_parses() {

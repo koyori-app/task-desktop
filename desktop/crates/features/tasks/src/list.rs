@@ -7,7 +7,8 @@
 use std::collections::{HashMap, HashSet};
 
 use api::types::{
-    AssigneeInput, CreateCommentRequest, LabelResponse, ProjectStatusResponse, TaskPriority,
+    AssigneeInput, BulkUpdateFields, BulkUpdateRequest, CreateCommentRequest, LabelResponse,
+    MilestoneResponse, ProjectStatusResponse, SearchTaskHit, SprintResponse, TaskPriority,
     UpdateTaskRequest, UserSummary,
 };
 use api::{Client, MyTasksQuery, TasksQuery};
@@ -15,11 +16,12 @@ use chrono::{Local, NaiveDate};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::calendar::{Calendar, CalendarEvent, CalendarState, Date};
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::popover::Popover;
-use gpui_kit::component::{Disableable, Icon, Selectable, Sizable, Size, Theme, WindowExt};
+use gpui_kit::component::{Disableable, Icon, Selectable, Sizable, Size, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use i18n::t;
@@ -28,15 +30,15 @@ use uuid::Uuid;
 use crate::avatar::user_avatar;
 use crate::model::{
     PRIORITIES, RowAssignee, TaskRow, due_label, due_timestamp, is_overdue, parse_hex_color,
-    priority_color, priority_label,
+    priority_color, priority_label, strip_tags,
 };
 
 const PAGE_SIZE: u32 = 50;
 
-/// 列幅（Web の TASK_ROW_GRID: 名前 | 担当 7rem | 期限 7rem | 優先度 6rem | コメント 4rem）。
-const ASSIGNEE_W: f32 = 112.;
-const DUE_W: f32 = 112.;
-const PRIORITY_W: f32 = 104.;
+/// 列幅。名前に幅を回すため、担当はアイコン、期限・優先度は短い表記が収まる分だけ取る。
+const ASSIGNEE_W: f32 = 80.;
+const DUE_W: f32 = 100.;
+const PRIORITY_W: f32 = 84.;
 const COMMENT_W: f32 = 36.;
 const ROW_H: f32 = 36.;
 /// 担当者のアイコンはこの数まで並べ、残りは「+N」。
@@ -173,7 +175,35 @@ enum Item {
     },
     Comment(Uuid),
     SubtasksEmpty(Uuid),
+    /// 全文検索の結果 1 件（`search_hits` の index）。
+    Hit(usize),
     Bottom,
+}
+
+/// Project 一覧の絞り込み（`TasksQuery` に載せる）。
+#[derive(Debug, Clone, Default, PartialEq)]
+struct Filters {
+    priority: Option<TaskPriority>,
+    assignee: Option<Uuid>,
+    label: Option<Uuid>,
+    milestone: Option<Uuid>,
+    sprint: Option<Uuid>,
+    archived: bool,
+}
+
+impl Filters {
+    fn is_active(&self) -> bool {
+        *self != Filters::default()
+    }
+
+    fn apply(&self, q: &mut TasksQuery) {
+        q.priority = self.priority;
+        q.assignee_id = self.assignee;
+        q.label_id = self.label;
+        q.milestone_id = self.milestone;
+        q.sprint_id = self.sprint;
+        q.is_archived = Some(self.archived);
+    }
 }
 
 /// 描画するグループ。
@@ -224,26 +254,56 @@ fn due_bucket(row: &TaskRow, today: NaiveDate) -> usize {
     }
 }
 
-#[derive(Clone, Copy)]
-struct Palette {
-    muted: Hsla,
-    danger: Hsla,
-    hover: Hsla,
-    selected: Hsla,
-    border: Hsla,
+type Palette = ::ui::Colors;
+
+/// 絞り込み 1 種（メニューの 1 項目）。選んだ後の `Filters` を先に作っておく。
+#[derive(Clone)]
+struct FilterCategory {
+    title: &'static str,
+    icon: IconName,
+    /// 選択中の値の名前（未選択は None）。
+    current: Option<String>,
+    /// 「すべて」を選んだ後。
+    cleared: Filters,
+    /// (名前, 選択中か, 選んだ後)
+    options: Vec<(String, bool, Filters)>,
 }
 
-impl Palette {
-    fn new(cx: &App) -> Self {
-        let t = Theme::global(cx);
-        Self {
-            muted: t.muted_foreground,
-            danger: t.danger,
-            hover: t.secondary.opacity(0.5),
-            selected: t.secondary,
-            border: t.border,
-        }
+fn filter_category<T: Copy + PartialEq>(
+    filters: &Filters,
+    title: &'static str,
+    icon: IconName,
+    current: Option<T>,
+    options: Vec<(T, String)>,
+    set: fn(&mut Filters, Option<T>),
+) -> FilterCategory {
+    let mut cleared = filters.clone();
+    set(&mut cleared, None);
+    FilterCategory {
+        title,
+        icon,
+        current: current
+            .and_then(|c| options.iter().find(|(v, _)| *v == c))
+            .map(|(_, name)| name.clone()),
+        cleared,
+        options: options
+            .into_iter()
+            .map(|(value, name)| {
+                let mut next = filters.clone();
+                set(&mut next, Some(value));
+                (name, current == Some(value), next)
+            })
+            .collect(),
     }
+}
+
+/// 行にホバーしたとき（か `show` のとき）だけ見える入れ物。場所は常に取る。
+fn hover_only(group: SharedString, show: bool, child: impl IntoElement) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .when(!show, |d| d.invisible().group_hover(group, |s| s.visible()))
+        .child(child)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -282,6 +342,8 @@ pub struct TaskListView {
     /// 作成成功後に render 側で input をクリアするフラグ
     /// （spawn タスクからは Window に触れないため）。
     clear_create_input: bool,
+    /// 作成欄に文字があるか（追加ボタンの表示に使う）。
+    create_has_text: bool,
     creating: bool,
     selected: Option<Uuid>,
     /// 折りたたんだグループの鍵。
@@ -306,6 +368,23 @@ pub struct TaskListView {
     comment_input: Entity<TextareaState>,
     comment_posting: bool,
     clear_comment_input: bool,
+    /// 絞り込み（Project のみ）と、その選択肢。
+    filters: Filters,
+    milestones: HashMap<Uuid, Vec<MilestoneResponse>>,
+    sprints: HashMap<Uuid, Vec<SprintResponse>>,
+    /// 検索欄。Project は全文検索、My Tasks は読み込み済みの行を絞る。
+    search_input: Entity<InputState>,
+    search_query: String,
+    search_hits: Option<Vec<SearchTaskHit>>,
+    search_generation: u64,
+    search_loading: bool,
+    clear_search_input: bool,
+    /// 一括操作の対象（Project のみ）。
+    bulk: HashSet<Uuid>,
+    bulk_running: bool,
+    /// 一覧全体の読み込みに失敗した（空の表示を再試行にする）。
+    load_failed: bool,
+    notice: Option<String>,
     _subs: Vec<Subscription>,
 }
 
@@ -319,10 +398,17 @@ impl TaskListView {
         let create_input = cx.new(|cx| {
             InputState::new(window, cx).placeholder(t!("tasks.list.new_task_placeholder"))
         });
-        let sub = cx.subscribe(&create_input, |this, _, ev: &InputEvent, cx| {
-            if matches!(ev, InputEvent::PressEnter { .. }) {
-                this.create_task(cx);
+        let sub = cx.subscribe(&create_input, |this, input, ev: &InputEvent, cx| match ev {
+            InputEvent::PressEnter { .. } => this.create_task(cx),
+            // 追加ボタンは入力があるときだけ出す。空かどうかが変わったときだけ描き直す。
+            InputEvent::Change => {
+                let has_text = !input.read(cx).value().trim().is_empty();
+                if has_text != this.create_has_text {
+                    this.create_has_text = has_text;
+                    cx.notify();
+                }
             }
+            _ => {}
         });
         let calendar = cx.new(|cx| CalendarState::new(window, cx));
         let calendar_sub = cx.subscribe(&calendar, |this, _, ev: &CalendarEvent, cx| {
@@ -335,6 +421,19 @@ impl TaskListView {
         });
         let comment_input =
             cx.new(|cx| TextareaState::new(window, cx).placeholder(t!("tasks.list.add_comment")));
+        let search_input = cx
+            .new(|cx| InputState::new(window, cx).placeholder(t!("tasks.list.search_placeholder")));
+        let search_sub = cx.subscribe(&search_input, |this, input, ev: &InputEvent, cx| {
+            match ev {
+                InputEvent::Change => {
+                    let query = input.read(cx).value().trim().to_string();
+                    this.set_search(query, cx);
+                }
+                // Enter で最初の結果（または表示中の先頭行）を開く。
+                InputEvent::PressEnter { .. } => this.move_selection(1, cx),
+                _ => {}
+            }
+        });
         Self {
             client,
             tenant,
@@ -353,6 +452,7 @@ impl TaskListView {
             shown_error: None,
             create_input,
             clear_create_input: false,
+            create_has_text: false,
             creating: false,
             selected: None,
             collapsed: HashSet::new(),
@@ -371,7 +471,20 @@ impl TaskListView {
             comment_input,
             comment_posting: false,
             clear_comment_input: false,
-            _subs: vec![sub, calendar_sub],
+            filters: Filters::default(),
+            milestones: HashMap::new(),
+            sprints: HashMap::new(),
+            search_input,
+            search_query: String::new(),
+            search_hits: None,
+            search_generation: 0,
+            search_loading: false,
+            clear_search_input: false,
+            bulk: HashSet::new(),
+            bulk_running: false,
+            load_failed: false,
+            notice: None,
+            _subs: vec![sub, calendar_sub, search_sub],
         }
     }
 
@@ -384,6 +497,9 @@ impl TaskListView {
             self.statuses.clear();
             self.members.clear();
             self.labels.clear();
+            self.milestones.clear();
+            self.sprints.clear();
+            self.filters = Filters::default();
             self.mode = ListMode::MyTasks;
             self.placeholder_dirty = true;
         }
@@ -402,6 +518,9 @@ impl TaskListView {
         self.statuses.clear();
         self.members.clear();
         self.labels.clear();
+        self.milestones.clear();
+        self.sprints.clear();
+        self.filters = Filters::default();
         self.generation += 1;
         self.loading = false;
         cx.notify();
@@ -418,6 +537,8 @@ impl TaskListView {
         self.selected = None;
         self.due_editing = None;
         self.comment_open = None;
+        self.bulk.clear();
+        self.load_failed = false;
     }
 
     pub fn focus_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -431,10 +552,25 @@ impl TaskListView {
             self.creating = false;
             self.clear_create_input = true;
             self.placeholder_dirty = true;
+            self.filters = Filters::default();
+            self.reset_search();
         }
         self.mode = mode;
         self.clear_loaded();
         self.reload(cx);
+    }
+
+    /// プロジェクト設定でステータス・ラベル・計画などが変わった。手元の写しを捨て、
+    /// 表示中ならそのプロジェクトを取り直す。
+    pub fn invalidate_project(&mut self, project: Uuid, cx: &mut Context<Self>) {
+        self.statuses.remove(&project);
+        self.members.remove(&project);
+        self.labels.remove(&project);
+        self.milestones.remove(&project);
+        self.sprints.remove(&project);
+        if self.project().is_some_and(|(id, _)| id == project) || self.project().is_none() {
+            self.reload(cx);
+        }
     }
 
     /// Quick Search (§20) 用に現在ロード済みの行を返す。
@@ -457,9 +593,13 @@ impl TaskListView {
         };
         self.loading = true;
         self.error = None;
+        self.load_failed = false;
         self.generation += 1;
         let generation = self.generation;
         cx.notify();
+        if self.project().is_some() && !self.search_query.is_empty() {
+            self.run_search(cx);
+        }
         if let Some((project, key)) = self.project() {
             self.reload_project(client, tenant, project, key, generation, cx);
             return;
@@ -497,7 +637,10 @@ impl TaskListView {
                         this.rows = rows.into_iter().map(|r| (r.id, r)).collect();
                         this.resolve_statuses(cx);
                     }
-                    Err(e) => this.error = Some(e.to_string()),
+                    Err(e) => {
+                        this.load_failed = true;
+                        this.error = Some(e.to_string());
+                    }
                 }
                 cx.notify();
             });
@@ -557,7 +700,10 @@ impl TaskListView {
                             this.fetch_children(id, status, cx);
                         }
                     }
-                    Err(e) => this.error = Some(e.to_string()),
+                    Err(e) => {
+                        this.load_failed = true;
+                        this.error = Some(e.to_string());
+                    }
                 }
                 cx.notify();
             });
@@ -581,6 +727,22 @@ impl TaskListView {
                         }
                     });
                 }
+            })
+            .detach();
+        }
+        if !self.milestones.contains_key(&project) {
+            let client = client.clone();
+            cx.spawn(async move |this, cx| {
+                let milestones = client.list_milestones(tenant, project).await;
+                let sprints = client.list_sprints(tenant, project, None).await;
+                let _ = this.update(cx, |this, cx| {
+                    if this.tenant == Some(tenant) {
+                        this.milestones
+                            .insert(project, milestones.unwrap_or_default());
+                        this.sprints.insert(project, sprints.unwrap_or_default());
+                        cx.notify();
+                    }
+                });
             })
             .detach();
         }
@@ -618,15 +780,15 @@ impl TaskListView {
         group.loading = true;
         group.failed = false;
         let status = group.status.id;
-        let q = TasksQuery {
+        let mut q = TasksQuery {
             status_id: Some(status),
             root_only: Some(true),
-            is_archived: Some(false),
             sort,
             limit: Some(PAGE_SIZE),
             cursor,
             ..Default::default()
         };
+        self.filters.apply(&mut q);
         let generation = self.generation;
         let key = key.to_string();
         cx.spawn(async move |this, cx| {
@@ -792,7 +954,7 @@ impl TaskListView {
         let q = TasksQuery {
             parent_task_id: Some(id),
             status_id: status,
-            is_archived: Some(false),
+            is_archived: Some(self.filters.archived),
             sort: self.sort.map(Sort::api_value),
             limit: Some(100),
             ..Default::default()
@@ -1096,14 +1258,17 @@ impl TaskListView {
     // ---- 選択 ----
 
     fn select_row(&mut self, id: Uuid, cx: &mut Context<Self>) {
-        let Some(row) = self.rows.get(&id) else {
+        // 検索結果は行データを持たないので、表示中のプロジェクトで開く。
+        let Some(project) = self
+            .rows
+            .get(&id)
+            .map(|r| r.project_id)
+            .or_else(|| self.project().map(|(p, _)| p))
+        else {
             return;
         };
         self.selected = Some(id);
-        cx.emit(TaskListEvent::Select {
-            project: row.project_id,
-            task: id,
-        });
+        cx.emit(TaskListEvent::Select { project, task: id });
         if let Some((_, ix)) = self.visible_rows.iter().find(|(row, _)| *row == id) {
             self.list_state.scroll_to_reveal_item(*ix);
         }
@@ -1135,6 +1300,21 @@ impl TaskListView {
 
     /// 描画用のグループ。Project はステータス別に取得したもの、My Tasks は期限別。
     fn groups(&self) -> Vec<GroupView> {
+        if self.project().is_some() && !self.search_query.is_empty() {
+            let count = self.search_hits.as_ref().map_or(0, Vec::len);
+            return vec![GroupView {
+                key: "search".into(),
+                name: t!("tasks.list.search_results").into(),
+                color: None,
+                ids: vec![],
+                count: count as i64,
+                status_id: None,
+                more: None,
+                loading: self.search_loading,
+                failed: false,
+                more_on_top: false,
+            }];
+        }
         if self.project().is_some() {
             return self
                 .project_groups
@@ -1166,8 +1346,13 @@ impl TaskListView {
         // My Tasks はプロジェクトをまたぐので期限で分ける（旧 Today / Upcoming を統合）。
         let today = Local::now().date_naive();
         let mut buckets: [Vec<Uuid>; DUE_BUCKETS.len()] = Default::default();
+        let needle = self.search_query.to_lowercase();
         for id in &self.order {
-            if let Some(row) = self.rows.get(id) {
+            if let Some(row) = self.rows.get(id)
+                && (needle.is_empty()
+                    || row.title.to_lowercase().contains(&needle)
+                    || row.seq_key.to_lowercase().contains(&needle))
+            {
                 buckets[due_bucket(row, today)].push(*id);
             }
         }
@@ -1196,6 +1381,153 @@ impl TaskListView {
                 }
             })
             .collect()
+    }
+
+    // ---- 絞り込み・検索 ----
+
+    fn set_filters(&mut self, filters: Filters, cx: &mut Context<Self>) {
+        if self.filters == filters {
+            return;
+        }
+        self.filters = filters;
+        self.bulk.clear();
+        self.reload(cx);
+    }
+
+    fn reset_search(&mut self) {
+        self.search_generation += 1;
+        self.search_query.clear();
+        self.search_hits = None;
+        self.search_loading = false;
+        self.clear_search_input = true;
+    }
+
+    fn set_search(&mut self, query: String, cx: &mut Context<Self>) {
+        if self.search_query == query {
+            return;
+        }
+        self.search_query = query;
+        self.selected = None;
+        if self.search_query.is_empty() {
+            self.search_generation += 1;
+            self.search_hits = None;
+            self.search_loading = false;
+        } else if self.project().is_some() {
+            self.run_search(cx);
+        }
+        cx.notify();
+    }
+
+    /// 全文検索（入力が止まってから送る）。
+    fn run_search(&mut self, cx: &mut Context<Self>) {
+        let (Some(client), Some(tenant), Some((project, _))) =
+            (self.client.clone(), self.tenant, self.project())
+        else {
+            return;
+        };
+        self.search_generation += 1;
+        let generation = self.search_generation;
+        let query = self.search_query.clone();
+        self.search_loading = true;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(250))
+                .await;
+            if !this
+                .update(cx, |this, _| this.search_generation == generation)
+                .unwrap_or(false)
+            {
+                return;
+            }
+            let res = client.search_tasks(tenant, project, &query).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.search_generation != generation {
+                    return;
+                }
+                this.search_loading = false;
+                match res {
+                    Ok(found) => this.search_hits = Some(found.tasks),
+                    Err(e) => {
+                        this.search_hits = Some(vec![]);
+                        this.error = Some(e.to_string());
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    // ---- 一括操作 ----
+
+    fn toggle_bulk(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        if self.project().is_none() {
+            return;
+        }
+        if !self.bulk.remove(&id) {
+            self.bulk.insert(id);
+        }
+        cx.notify();
+    }
+
+    /// 選択中のタスクへ同じ変更を一度に送る。失敗した分は理由を知らせる。
+    fn bulk_update(&mut self, update: BulkUpdateFields, cx: &mut Context<Self>) {
+        let (Some(client), Some(tenant), Some((project, _))) =
+            (self.client.clone(), self.tenant, self.project())
+        else {
+            return;
+        };
+        if self.bulk.is_empty() || self.bulk_running {
+            return;
+        }
+        let req = BulkUpdateRequest {
+            task_ids: self.bulk.iter().copied().collect(),
+            update,
+        };
+        self.bulk_running = true;
+        let context_generation = self.context_generation;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let res = client.bulk_update_tasks(tenant, project, &req).await;
+            let _ = this.update(cx, |this, cx| {
+                this.bulk_running = false;
+                if this.context_generation != context_generation {
+                    return;
+                }
+                match res {
+                    Ok(result) => {
+                        if result.failed.is_empty() {
+                            this.notice = Some(t!("tasks.list.bulk_done", count = result.updated));
+                            this.bulk.clear();
+                        } else {
+                            let reasons = result
+                                .failed
+                                .iter()
+                                .map(|f| f.reason.clone())
+                                .collect::<HashSet<_>>()
+                                .into_iter()
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            // 失敗したものだけ選択に残して再実行できるようにする。
+                            this.bulk = result.failed.iter().map(|f| f.task_id).collect();
+                            this.error = Some(t!(
+                                "tasks.list.bulk_partial",
+                                updated = result.updated,
+                                failed = result.failed.len(),
+                                reasons = reasons
+                            ));
+                        }
+                        this.reload(cx);
+                        if let Some(task) = this.selected {
+                            cx.emit(TaskListEvent::Select { project, task });
+                        }
+                    }
+                    Err(e) => this.error = Some(e.to_string()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn create_task(&mut self, cx: &mut Context<Self>) {
@@ -1252,22 +1584,7 @@ impl TaskListView {
                 });
                 return;
             };
-            let req = api::types::CreateTaskRequest {
-                title: title.clone(),
-                status_id,
-                assignees: vec![],
-                custom_field_values: vec![],
-                description: None,
-                estimated_minutes: None,
-                hard_deadline: None,
-                label_ids: vec![],
-                milestone_id: None,
-                parent_task_id: None,
-                priority: None,
-                progress_pct: None,
-                soft_deadline: None,
-                sprint_id: None,
-            };
+            let req = crate::model::create_request(title.clone(), status_id, None);
             let res = client.create_task(tenant, project, &req).await;
             let _ = this.update(cx, |this, cx| {
                 if this.context_generation != context_generation
@@ -1315,6 +1632,13 @@ impl Render for TaskListView {
             self.comment_input
                 .update(cx, |s, cx| s.set_value("", window, cx));
         }
+        if std::mem::take(&mut self.clear_search_input) {
+            self.search_input
+                .update(cx, |s, cx| s.set_value("", window, cx));
+        }
+        if let Some(notice) = self.notice.take() {
+            window.push_notification(Notification::new().message(notice), cx);
+        }
         if self.placeholder_dirty {
             self.placeholder_dirty = false;
             // 作成先が見えないと My Tasks で作ったタスクの行き先が分からない。
@@ -1325,9 +1649,10 @@ impl Render for TaskListView {
             self.create_input
                 .update(cx, |s, cx| s.set_placeholder(placeholder, window, cx));
         }
-        let c = Theme::global(cx).semantic_tokens().colors;
-        let palette = Palette::new(cx);
-        let muted = palette.muted;
+        let palette = ::ui::colors(cx);
+        let c = palette;
+        let has_title = self.create_has_text;
+        let muted = palette.text_muted;
         let empty_text = match self.mode {
             ListMode::MyTasks => t!("tasks.list.empty_my"),
             ListMode::Project { .. } => t!("tasks.list.empty_project"),
@@ -1343,18 +1668,29 @@ impl Render for TaskListView {
             Some(t!("tasks.list.empty_signed_out"))
         } else if self.view_groups.is_empty() && self.loading {
             Some(t!("tasks.list.loading"))
+        } else if self.view_groups.is_empty() && self.load_failed {
+            Some(t!("tasks.list.load_failed"))
+        } else if self.view_groups.is_empty() && !self.search_query.is_empty() {
+            Some(t!("tasks.list.search_empty"))
+        } else if self.view_groups.is_empty() && self.filters.is_active() {
+            Some(t!("tasks.list.filter_empty"))
         } else if self.view_groups.is_empty() {
             Some(empty_text)
         } else {
             None
         };
+        let failed = self.load_failed && self.view_groups.is_empty();
+        let filtered = self.filters.is_active() && self.view_groups.is_empty();
+        let filter_bar = self.render_filter_bar(palette, cx);
+        let bulk_bar =
+            (project_mode && !self.bulk.is_empty()).then(|| self.render_bulk_bar(palette, cx));
 
         let mut header = div()
             .flex()
             .flex_shrink_0()
             .items_center()
             .h(px(32.))
-            .px_2()
+            .px_4()
             .border_b_1()
             .border_color(c.border)
             .child(
@@ -1362,7 +1698,8 @@ impl Render for TaskListView {
                     .flex()
                     .flex_1()
                     .min_w_0()
-                    .pl(px(46.))
+                    // 一括選択のチェックボックスの分だけ Project は右へずらす。
+                    .pl(px(if project_mode { 68. } else { 46. }))
                     .child(self.sort_header(SortColumn::Title, cx)),
             );
         if project_mode {
@@ -1402,43 +1739,73 @@ impl Render for TaskListView {
                     .flex_shrink_0()
                     .items_center()
                     .gap_2()
+                    .h(px(44.))
                     .px_4()
-                    .py_2()
                     .border_b_1()
                     .border_color(c.border)
-                    .child(Icon::new(IconName::Plus).size_4().text_color(muted))
                     .child(
                         div().flex_1().min_w_0().child(
                             Input::new(&self.create_input)
                                 .id("new-task-title")
+                                .appearance(false)
+                                .prefix(Icon::new(IconName::Plus).small().text_color(muted))
                                 .disabled(self.creating),
                         ),
                     )
-                    .child(
-                        Button::new("create-task")
-                            .compact()
-                            .label(if self.creating {
-                                t!("tasks.list.creating")
-                            } else {
-                                t!("tasks.list.add")
-                            })
-                            .disabled(self.creating)
-                            .on_click(cx.listener(|this, _, _, cx| this.create_task(cx))),
-                    ),
+                    .when(has_title || self.creating, |d| {
+                        d.child(
+                            Button::new("create-task")
+                                .primary()
+                                .small()
+                                .label(if self.creating {
+                                    t!("tasks.list.creating")
+                                } else {
+                                    t!("tasks.list.add")
+                                })
+                                .disabled(self.creating)
+                                .on_click(cx.listener(|this, _, _, cx| this.create_task(cx))),
+                        )
+                    }),
             )
+            .child(filter_bar)
+            .children(bulk_bar)
             .map(|d| match empty {
                 Some(text) => d.child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .justify_center()
-                        .gap_2()
-                        .p_6()
-                        .text_color(muted)
-                        .child(Icon::new(IconName::Inbox).size_8())
-                        .child(div().text_sm().child(text)),
+                    ::ui::empty_state(
+                        &palette,
+                        if failed {
+                            IconName::CircleAlert
+                        } else if filtered || !self.search_query.is_empty() {
+                            IconName::SearchX
+                        } else {
+                            IconName::Inbox
+                        },
+                        text,
+                        None,
+                    )
+                    .flex_1()
+                    .when(failed, |d| {
+                        d.child(
+                            Button::new("list-retry")
+                                .outline()
+                                .small()
+                                .icon(IconName::RefreshCw)
+                                .label(t!("tasks.list.retry"))
+                                .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
+                        )
+                    })
+                    .when(filtered, |d| {
+                        d.child(
+                            Button::new("list-clear-filters")
+                                .outline()
+                                .small()
+                                .icon(IconName::FunnelX)
+                                .label(t!("tasks.list.filter_clear"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.set_filters(Filters::default(), cx)
+                                })),
+                        )
+                    }),
                 ),
                 None => d.child(header).child(
                     div()
@@ -1452,6 +1819,20 @@ impl Render for TaskListView {
                             match event.keystroke.key.as_str() {
                                 "up" => this.move_selection(-1, cx),
                                 "down" => this.move_selection(1, cx),
+                                // Enter で選択中のタスクを開き直す（Detail を最新にする）。
+                                "enter" => {
+                                    let Some(id) = this.selected else { return };
+                                    this.select_row(id, cx);
+                                }
+                                // x で一括操作の対象に入れる / 外す（Project のみ）。
+                                "x" if this.project().is_some() => {
+                                    let Some(id) = this.selected else { return };
+                                    this.toggle_bulk(id, cx);
+                                }
+                                "escape" if !this.bulk.is_empty() => {
+                                    this.bulk.clear();
+                                    cx.notify();
+                                }
                                 // → / ← でサブタスクの開閉（Project のみ）。
                                 key @ ("right" | "left") if this.project().is_some() => {
                                     let Some(id) = this.selected else { return };
@@ -1500,7 +1881,7 @@ impl TaskListView {
             .items_center()
             .gap_2()
             .h(px(ROW_H))
-            .px_2()
+            .px_4()
             .mt_2()
             .child(
                 Button::new(SharedString::from(format!("group-{}", group.key)))
@@ -1525,13 +1906,8 @@ impl TaskListView {
                     .flex()
                     .items_center()
                     .gap_1p5()
-                    .h(px(20.))
-                    .px_2()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(color)
-                    .text_size(px(11.))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
                     .child(div().size(px(8.)).rounded_full().bg(color))
                     .child(if group.name.is_empty() {
                         "—".to_string()
@@ -1555,14 +1931,16 @@ impl TaskListView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let status = group.status_id;
+        let muted = ::ui::colors(cx).text_muted;
         div()
             .flex()
-            .pl(px(46.))
-            .py_1()
+            .pl(px(56.))
+            .py_0p5()
             .child(
                 Button::new(SharedString::from(format!("more-{}", group.key)))
                     .ghost()
-                    .compact()
+                    .xsmall()
+                    .text_color(muted)
                     .label(t!("tasks.list.more_remaining", count = remaining))
                     .disabled(group.loading)
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -1582,7 +1960,7 @@ impl TaskListView {
         Button::new(SharedString::from(format!("sort-{column:?}")))
             .ghost()
             .xsmall()
-            .text_color(Theme::global(cx).muted_foreground)
+            .text_color(::ui::colors(cx).text_muted)
             .label(column.label())
             .when_some(current, |b, sort| {
                 b.icon(if sort.desc {
@@ -1625,6 +2003,20 @@ impl TaskListView {
     /// グループを項目の並びに展開する。要素は作らないので全件でも軽い。
     fn build_items(&self, groups: &[GroupView]) -> Vec<Item> {
         let mut items = vec![];
+        if let (Some(_), false) = (self.project(), self.search_query.is_empty()) {
+            items.push(Item::Header {
+                group: 0,
+                collapsed: false,
+            });
+            match &self.search_hits {
+                Some(hits) if !hits.is_empty() => {
+                    items.extend((0..hits.len()).map(Item::Hit));
+                }
+                _ => items.push(Item::GroupEmpty(0)),
+            }
+            items.push(Item::Bottom);
+            return items;
+        }
         for (ix, group) in groups.iter().enumerate() {
             let collapsed = self.collapsed.contains(&group.key);
             items.push(Item::Header {
@@ -1685,6 +2077,11 @@ impl TaskListView {
             .enumerate()
             .filter_map(|(ix, item)| match item {
                 Item::Row { id, .. } => Some((*id, ix)),
+                Item::Hit(hit) => self
+                    .search_hits
+                    .as_ref()
+                    .and_then(|h| h.get(*hit))
+                    .map(|h| (h.id, ix)),
                 _ => None,
             })
             .collect();
@@ -1697,7 +2094,7 @@ impl TaskListView {
     }
 
     fn render_item(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let palette = Palette::new(cx);
+        let palette = ::ui::colors(cx);
         let Some(item) = self.items.get(ix).cloned() else {
             return div().into_any_element();
         };
@@ -1707,7 +2104,7 @@ impl TaskListView {
                 group: g,
                 collapsed,
             } => match group(g) {
-                Some(group) => self.render_group_header(group, collapsed, palette.muted, cx),
+                Some(group) => self.render_group_header(group, collapsed, palette.text_muted, cx),
                 None => div().into_any_element(),
             },
             Item::More(g) => match group(g) {
@@ -1721,7 +2118,7 @@ impl TaskListView {
                 .px_3()
                 .py_2()
                 .text_sm()
-                .text_color(palette.muted)
+                .text_color(palette.text_muted)
                 .child(if group(g).is_some_and(|g| g.loading) {
                     t!("tasks.list.loading")
                 } else {
@@ -1750,12 +2147,472 @@ impl TaskListView {
                     .pl(px(64.))
                     .py_1p5()
                     .text_xs()
-                    .text_color(palette.muted)
+                    .text_color(palette.text_muted)
                     .child(text)
                     .into_any_element()
             }
+            Item::Hit(hit) => match self.search_hits.as_ref().and_then(|h| h.get(hit)).cloned() {
+                Some(hit) => self.render_hit(hit, palette, cx),
+                None => div().into_any_element(),
+            },
             Item::Bottom => div().h_4().into_any_element(),
         }
+    }
+
+    /// 全文検索の 1 件。行データは持たないので、キー・タイトル・一致箇所だけ出す。
+    #[inline(never)]
+    fn render_hit(
+        &self,
+        hit: SearchTaskHit,
+        palette: Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = hit.id;
+        let selected = self.selected == Some(id);
+        let key = match self.project() {
+            Some((_, key)) => format!("{key}-{}", hit.seq_id),
+            None => format!("#{}", hit.seq_id),
+        };
+        let snippet = strip_tags(&hit.highlight);
+        let snippet = snippet.trim();
+        let show_snippet = !snippet.is_empty() && snippet != hit.title;
+        div()
+            .id(SharedString::from(format!("task-hit-{id}")))
+            .flex()
+            .items_center()
+            .gap_2()
+            .h(px(ROW_H))
+            .px_3()
+            .border_b_1()
+            .border_color(palette.border.opacity(0.6))
+            .cursor_pointer()
+            .when(selected, |d| d.bg(palette.selected))
+            .when(!selected, |d| d.hover(|d| d.bg(palette.hover)))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                window.focus(&this.focus_handle, cx);
+                this.select_row(id, cx);
+            }))
+            .child(
+                Icon::new(IconName::Search)
+                    .size_3()
+                    .text_color(palette.text_muted),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_xs()
+                    .text_color(palette.text_muted)
+                    .child(key),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .max_w(px(320.))
+                    .text_sm()
+                    .text_ellipsis()
+                    .child(hit.title.clone()),
+            )
+            .when(show_snippet, |d| {
+                d.child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_xs()
+                        .text_color(palette.text_muted)
+                        .text_ellipsis()
+                        .child(snippet.to_string()),
+                )
+            })
+            .into_any_element()
+    }
+
+    /// 検索欄と、Project の絞り込み（優先度・担当者・ラベル・マイルストーン・スプリント・アーカイブ）。
+    #[inline(never)]
+    fn render_filter_bar(&self, palette: Palette, cx: &mut Context<Self>) -> AnyElement {
+        let search = div().w(px(220.)).child(
+            Input::new(&self.search_input)
+                .id("task-search")
+                .small()
+                .prefix(
+                    Icon::new(IconName::Search)
+                        .small()
+                        .text_color(palette.text_muted),
+                )
+                .cleanable(true),
+        );
+        let bar = ::ui::toolbar(&palette).flex_wrap().child(search);
+        let Some((project, _)) = self.project() else {
+            return bar.into_any_element();
+        };
+        let f = &self.filters;
+        let names = |items: Option<Vec<(Uuid, String)>>| items.unwrap_or_default();
+        let categories = vec![
+            filter_category(
+                f,
+                t!("tasks.list.column.priority"),
+                IconName::Flag,
+                f.priority,
+                PRIORITIES
+                    .iter()
+                    .map(|p| (*p, priority_label(*p).to_string()))
+                    .collect(),
+                |f, v| f.priority = v,
+            ),
+            filter_category(
+                f,
+                t!("tasks.list.column.assignee"),
+                IconName::User,
+                f.assignee,
+                names(
+                    self.members
+                        .get(&project)
+                        .map(|m| m.iter().map(|u| (u.id, u.username.clone())).collect()),
+                ),
+                |f, v| f.assignee = v,
+            ),
+            filter_category(
+                f,
+                t!("tasks.list.labels"),
+                IconName::Tag,
+                f.label,
+                names(
+                    self.labels
+                        .get(&project)
+                        .map(|l| l.iter().map(|x| (x.id, x.name.clone())).collect()),
+                ),
+                |f, v| f.label = v,
+            ),
+            filter_category(
+                f,
+                t!("tasks.detail.milestone"),
+                IconName::Milestone,
+                f.milestone,
+                names(
+                    self.milestones
+                        .get(&project)
+                        .map(|l| l.iter().map(|x| (x.id, x.name.clone())).collect()),
+                ),
+                |f, v| f.milestone = v,
+            ),
+            filter_category(
+                f,
+                t!("tasks.detail.sprint"),
+                IconName::Zap,
+                f.sprint,
+                names(
+                    self.sprints
+                        .get(&project)
+                        .map(|l| l.iter().map(|x| (x.id, x.name.clone())).collect()),
+                ),
+                |f, v| f.sprint = v,
+            ),
+        ];
+        let active =
+            categories.iter().filter(|c| c.current.is_some()).count() + usize::from(f.archived);
+        let archived_toggle = {
+            let mut next = f.clone();
+            next.archived = !next.archived;
+            next
+        };
+        // 選んでいる条件だけを、外せるチップで並べる。
+        let chips: Vec<AnyElement> = categories
+            .iter()
+            .filter_map(|c| Some((c, c.current.clone()?)))
+            .enumerate()
+            .map(|(ix, (c, value))| {
+                let cleared = c.cleared.clone();
+                Button::new(("filter-chip", ix))
+                    .outline()
+                    .xsmall()
+                    .icon(c.icon)
+                    .label(format!("{} : {value}", c.title))
+                    .tooltip(t!("tasks.list.filter_remove"))
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.set_filters(cleared.clone(), cx)),
+                    )
+                    .into_any_element()
+            })
+            .chain(f.archived.then(|| {
+                let next = archived_toggle.clone();
+                Button::new("filter-chip-archived")
+                    .outline()
+                    .xsmall()
+                    .icon(IconName::Archive)
+                    .label(t!("tasks.list.show_archived"))
+                    .tooltip(t!("tasks.list.filter_remove"))
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_filters(next.clone(), cx)))
+                    .into_any_element()
+            }))
+            .collect();
+        let owner = cx.entity().downgrade();
+        let archived = f.archived;
+        let menu = Button::new("filter-menu")
+            .ghost()
+            .small()
+            .icon(IconName::ListFilter)
+            .label(if active > 0 {
+                t!("tasks.list.filter_count", count = active)
+            } else {
+                t!("tasks.list.filter").to_string()
+            })
+            .selected(active > 0)
+            .dropdown_menu(move |mut menu, window, cx| {
+                for category in &categories {
+                    let category = category.clone();
+                    let owner = owner.clone();
+                    let label = match &category.current {
+                        Some(value) => format!("{} : {value}", category.title),
+                        None => category.title.to_string(),
+                    };
+                    menu = menu.submenu_with_icon(
+                        Some(Icon::new(category.icon)),
+                        label,
+                        window,
+                        cx,
+                        move |mut sub, _, _| {
+                            let all_owner = owner.clone();
+                            let cleared = category.cleared.clone();
+                            sub = sub.item(
+                                PopupMenuItem::new(t!("tasks.list.filter_all"))
+                                    .checked(category.current.is_none())
+                                    .on_click(move |_, _, cx| {
+                                        let cleared = cleared.clone();
+                                        let _ = all_owner
+                                            .update(cx, |this, cx| this.set_filters(cleared, cx));
+                                    }),
+                            );
+                            if category.options.is_empty() {
+                                return sub.item(
+                                    PopupMenuItem::new(t!("tasks.detail.none")).disabled(true),
+                                );
+                            }
+                            for (name, checked, next) in &category.options {
+                                let (next, owner) = (next.clone(), owner.clone());
+                                sub = sub.item(
+                                    PopupMenuItem::new(name.clone()).checked(*checked).on_click(
+                                        move |_, _, cx| {
+                                            let next = next.clone();
+                                            let _ = owner
+                                                .update(cx, |this, cx| this.set_filters(next, cx));
+                                        },
+                                    ),
+                                );
+                            }
+                            sub.max_h(px(360.)).scrollable(true)
+                        },
+                    );
+                }
+                let (archived_owner, clear_owner) = (owner.clone(), owner.clone());
+                let next = archived_toggle.clone();
+                menu.separator()
+                    .item(
+                        PopupMenuItem::new(t!("tasks.list.show_archived"))
+                            .icon(IconName::Archive)
+                            .checked(archived)
+                            .on_click(move |_, _, cx| {
+                                let next = next.clone();
+                                let _ = archived_owner
+                                    .update(cx, |this, cx| this.set_filters(next, cx));
+                            }),
+                    )
+                    .separator()
+                    .item(
+                        PopupMenuItem::new(t!("tasks.list.filter_clear"))
+                            .icon(IconName::FunnelX)
+                            .disabled(active == 0)
+                            .on_click(move |_, _, cx| {
+                                let _ = clear_owner.update(cx, |this, cx| {
+                                    this.set_filters(Filters::default(), cx)
+                                });
+                            }),
+                    )
+            });
+        bar.child(menu).children(chips).into_any_element()
+    }
+
+    /// 一括操作のバー（選択中の件数と、まとめて変える項目）。
+    #[inline(never)]
+    fn render_bulk_bar(&self, palette: Palette, cx: &mut Context<Self>) -> AnyElement {
+        let Some((project, _)) = self.project() else {
+            return div().into_any_element();
+        };
+        let owner = cx.entity().downgrade();
+        let busy = self.bulk_running;
+        type Pick = (String, BulkUpdateFields);
+        let menu_button =
+            |id: &'static str, icon: IconName, label: &'static str, items: Vec<Pick>| {
+                let owner = owner.clone();
+                Button::new(id)
+                    .outline()
+                    .xsmall()
+                    .icon(icon)
+                    .label(label)
+                    .dropdown_caret(true)
+                    .disabled(busy)
+                    .dropdown_menu(move |mut menu, _, _| {
+                        if items.is_empty() {
+                            return menu
+                                .item(PopupMenuItem::new(t!("tasks.detail.none")).disabled(true));
+                        }
+                        for (name, update) in &items {
+                            let (update, owner) = (update.clone(), owner.clone());
+                            menu = menu.item(PopupMenuItem::new(name.clone()).on_click(
+                                move |_, _, cx| {
+                                    let update = update.clone();
+                                    let _ =
+                                        owner.update(cx, |this, cx| this.bulk_update(update, cx));
+                                },
+                            ));
+                        }
+                        menu
+                    })
+            };
+        let statuses = self
+            .statuses
+            .get(&project)
+            .map(|ss| {
+                ss.iter()
+                    .map(|s| {
+                        (
+                            s.name.clone(),
+                            BulkUpdateFields {
+                                status_id: Some(s.id),
+                                ..Default::default()
+                            },
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let members = self
+            .members
+            .get(&project)
+            .map(|ms| {
+                ms.iter()
+                    .map(|u| {
+                        (
+                            u.username.clone(),
+                            BulkUpdateFields {
+                                assignee_id: Some(u.id),
+                                ..Default::default()
+                            },
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let labels = self.labels.get(&project).cloned().unwrap_or_default();
+        let add_labels = labels
+            .iter()
+            .map(|l| {
+                (
+                    l.name.clone(),
+                    BulkUpdateFields {
+                        add_label_ids: Some(vec![l.id]),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        let remove_labels = labels
+            .iter()
+            .map(|l| {
+                (
+                    l.name.clone(),
+                    BulkUpdateFields {
+                        remove_label_ids: Some(vec![l.id]),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        let mut sprints: Vec<Pick> = self
+            .sprints
+            .get(&project)
+            .map(|ss| {
+                ss.iter()
+                    .filter(|s| s.status != api::types::SprintStatus::Completed)
+                    .map(|s| {
+                        (
+                            s.name.clone(),
+                            BulkUpdateFields {
+                                sprint_id: Some(s.id),
+                                ..Default::default()
+                            },
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        sprints.push((
+            t!("tasks.list.bulk_clear_sprint").into(),
+            BulkUpdateFields {
+                clear_sprint_id: Some(true),
+                ..Default::default()
+            },
+        ));
+        div()
+            .flex()
+            .flex_wrap()
+            .flex_shrink_0()
+            .items_center()
+            .gap_1()
+            .px_4()
+            .py_1p5()
+            .border_b_1()
+            .border_color(palette.border)
+            .bg(palette.hover)
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .pr_2()
+                    .child(t!("tasks.list.bulk_selected", count = self.bulk.len())),
+            )
+            .child(menu_button(
+                "bulk-status",
+                IconName::CircleDot,
+                t!("tasks.detail.status"),
+                statuses,
+            ))
+            .child(menu_button(
+                "bulk-assignee",
+                IconName::UserPlus,
+                t!("tasks.list.bulk_assign"),
+                members,
+            ))
+            .child(menu_button(
+                "bulk-add-label",
+                IconName::TagPlus,
+                t!("tasks.list.bulk_add_label"),
+                add_labels,
+            ))
+            .child(menu_button(
+                "bulk-remove-label",
+                IconName::TagX,
+                t!("tasks.list.bulk_remove_label"),
+                remove_labels,
+            ))
+            .child(menu_button(
+                "bulk-sprint",
+                IconName::Zap,
+                t!("tasks.detail.sprint"),
+                sprints,
+            ))
+            .child(div().flex_1())
+            .child(
+                Button::new("bulk-clear")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::X)
+                    .label(t!("tasks.list.bulk_clear"))
+                    .tooltip(t!("tasks.list.bulk_hint"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.bulk.clear();
+                        cx.notify();
+                    })),
+            )
+            .into_any_element()
     }
 
     fn render_group_failed(
@@ -1780,7 +2637,7 @@ impl TaskListView {
                 d.child(
                     Button::new(SharedString::from(format!("retry-{status}")))
                         .outline()
-                        .compact()
+                        .small()
                         .label(t!("tasks.list.retry"))
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.load_more_group(status, cx)),
@@ -1805,7 +2662,7 @@ impl TaskListView {
         let selected = self.selected == Some(id);
         let name_cell = self.render_name_cell(&row, depth, group_status, project_mode, palette, cx);
         let assignee_cell =
-            project_mode.then(|| self.render_assignee_cell(&row, palette.muted, cx));
+            project_mode.then(|| self.render_assignee_cell(&row, palette.text_muted, cx));
         let due_cell = self.render_due_cell(&row, palette, cx);
         let priority_cell = self.render_priority_cell(&row, cx);
         let comment_cell = self.render_comment_cell(id, cx);
@@ -1817,15 +2674,22 @@ impl TaskListView {
             .items_center()
             .h(px(ROW_H))
             .px_2()
-            .border_b_1()
-            .border_color(palette.border.opacity(0.6))
+            .mx_2()
+            .rounded_md()
             .cursor_pointer()
             .when(selected, |d| d.bg(palette.selected))
             .when(!selected, |d| d.hover(|d| d.bg(palette.hover)))
-            .on_click(cx.listener(move |this, _, window, cx| {
+            .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
                 window.focus(&this.focus_handle, cx);
+                if ev.modifiers().secondary() && project_mode {
+                    this.toggle_bulk(id, cx);
+                    return;
+                }
                 this.select_row(id, cx);
             }))
+            .when(self.bulk.contains(&id), |d| {
+                d.bg(palette.selected.opacity(0.7))
+            })
             .child(name_cell)
             .children(assignee_cell)
             .child(due_cell)
@@ -1996,7 +2860,7 @@ impl TaskListView {
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let muted = palette.muted;
+        let muted = palette.text_muted;
         let subtask_toggle =
             self.render_subtask_toggle(row.id, depth, group_status, project_mode, cx);
         let status_button = self.render_status_button(row, muted, cx);
@@ -2024,12 +2888,28 @@ impl TaskListView {
             })
             .collect();
 
+        let id = row.id;
+        // 一括選択の枠は、何か選んでいる間か行にホバーしたときだけ出す。
+        let bulk_box = project_mode.then(|| {
+            hover_only(
+                SharedString::from(format!("task-row-{id}")),
+                !self.bulk.is_empty(),
+                Checkbox::new(SharedString::from(format!("bulk-{id}")))
+                    .checked(self.bulk.contains(&id))
+                    .tooltip(t!("tasks.list.bulk_hint"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.toggle_bulk(id, cx);
+                    })),
+            )
+        });
         div()
             .flex()
             .flex_1()
             .min_w_0()
             .items_center()
             .gap_1p5()
+            .children(bulk_box)
             .when(depth == 1, |d| d.pl(px(24.)))
             .child(subtask_toggle)
             .child(status_button)
@@ -2076,7 +2956,11 @@ impl TaskListView {
             .flex()
             .w(px(ASSIGNEE_W))
             .px_1()
-            .child(self.assignee_picker(row, busy, muted, cx))
+            .child(hover_only(
+                SharedString::from(format!("task-row-{}", row.id)),
+                !row.assignees.is_empty() || self.selected == Some(row.id),
+                self.assignee_picker(row, busy, muted, cx),
+            ))
             .into_any_element()
     }
 
@@ -2089,7 +2973,7 @@ impl TaskListView {
     ) -> AnyElement {
         let id = row.id;
         let busy = self.pending.contains(&id);
-        let muted = palette.muted;
+        let muted = palette.text_muted;
         // 期限。押すとカレンダーを出す（Web は日付入力）。
         let due_owner = cx.entity().downgrade();
         let editing_due = self.due_editing == Some(id);
@@ -2099,7 +2983,7 @@ impl TaskListView {
         let due_trigger = match row.due {
             Some(due) => Button::new(SharedString::from(format!("row-due-{id}")))
                 .ghost()
-                .compact()
+                .small()
                 .disabled(busy)
                 .child(
                     div()
@@ -2112,7 +2996,7 @@ impl TaskListView {
                         } else {
                             muted
                         })
-                        .child(Icon::new(IconName::Calendar).size_4())
+                        .child(Icon::new(IconName::Calendar).small())
                         .child(due_label(&due)),
                 ),
             None => Button::new(SharedString::from(format!("row-due-{id}")))
@@ -2126,7 +3010,9 @@ impl TaskListView {
             .flex()
             .w(px(DUE_W))
             .px_1()
-            .child(
+            .child(hover_only(
+                SharedString::from(format!("task-row-{id}")),
+                has_due || editing_due,
                 Popover::new(SharedString::from(format!("due-popover-{id}")))
                     .trigger(due_trigger)
                     .open(editing_due)
@@ -2146,7 +3032,7 @@ impl TaskListView {
                                 d.child(
                                     Button::new(SharedString::from(format!("row-due-clear-{id}")))
                                         .ghost()
-                                        .compact()
+                                        .small()
                                         .icon(IconName::X)
                                         .label(t!("tasks.list.clear_due"))
                                         .on_click(move |_, _, cx| {
@@ -2158,7 +3044,7 @@ impl TaskListView {
                                 )
                             })
                     }),
-            )
+            ))
             .into_any_element()
     }
 
@@ -2170,7 +3056,7 @@ impl TaskListView {
         let priority_owner = cx.entity().downgrade();
         let priority_button = Button::new(SharedString::from(format!("row-priority-{id}")))
             .ghost()
-            .compact()
+            .small()
             .disabled(busy)
             .child(priority_chip(current_priority))
             .dropdown_menu(move |mut menu, _, _| {
@@ -2213,7 +3099,11 @@ impl TaskListView {
             .w(px(COMMENT_W))
             .flex()
             .justify_center()
-            .child(comment_button)
+            .child(hover_only(
+                SharedString::from(format!("task-row-{id}")),
+                self.comment_open == Some(id) || self.selected == Some(id),
+                comment_button,
+            ))
             .into_any_element()
     }
 
@@ -2245,7 +3135,7 @@ impl TaskListView {
         let owner = cx.entity().downgrade();
         Button::new(SharedString::from(format!("row-assignees-{id}")))
             .ghost()
-            .compact()
+            .small()
             .disabled(busy)
             .tooltip(t!("tasks.list.assignees"))
             .when(avatars.is_empty(), |b| b.icon(IconName::UserPlus))
@@ -2325,7 +3215,7 @@ impl TaskListView {
                     .child(
                         Button::new("row-comment-send")
                             .primary()
-                            .compact()
+                            .small()
                             .label(t!("tasks.list.comment_send"))
                             .disabled(self.comment_posting || !has_text)
                             .on_click(
@@ -2335,7 +3225,7 @@ impl TaskListView {
                     .child(
                         Button::new("row-comment-close")
                             .ghost()
-                            .compact()
+                            .small()
                             .label(t!("tasks.list.comment_close"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.comment_open = None;

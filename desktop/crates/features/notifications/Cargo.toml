@@ -6,6 +6,7 @@ license.workspace = true
 [dependencies]
 i18n = { path = "../../i18n" }
 gpui-kit.workspace = true
+ui = { path = "../../ui" }
 api = { path = "../../api" }
 core = { path = "../../core" }
 uuid = { version = "1", features = ["v4", "serde"] }

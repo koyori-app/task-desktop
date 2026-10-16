@@ -42,6 +42,7 @@ const SOURCES: &[(&str, &str)] = &[
         include_str!("../locales/notifications.toml"),
     ),
     ("core", include_str!("../locales/core.toml")),
+    ("projects", include_str!("../locales/projects.toml")),
 ];
 
 #[derive(Deserialize)]
