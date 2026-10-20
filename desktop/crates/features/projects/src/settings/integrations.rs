@@ -223,7 +223,7 @@ impl ProjectSettingsView {
             github.connected_at.map(|at| {
                 t!(
                     "projects.github.connected_at",
-                    at = at.format("%Y-%m-%d %H:%M")
+                    at = core::timezone::local(&at).format("%Y-%m-%d %H:%M")
                 )
             })
         } else {

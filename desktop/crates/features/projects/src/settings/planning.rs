@@ -176,7 +176,7 @@ impl ProjectSettingsView {
             rows.push(placeholder(c, t!("projects.milestones.empty")));
         }
         let this = cx.entity().downgrade();
-        let today = chrono::Local::now().date_naive();
+        let today = core::timezone::today();
         for m in &self.milestones {
             let id = m.id;
             let name = m.name.clone();

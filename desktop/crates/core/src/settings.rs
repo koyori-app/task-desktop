@@ -51,6 +51,8 @@ pub struct Settings {
     pub appearance: Appearance,
     /// 表示言語。未設定（既存の settings.json）は日本語。
     pub language: i18n::Language,
+    /// 表示タイムゾーン（IANA 名）。`None` は OS に合わせる。
+    pub timezone: Option<String>,
     pub launch_at_login: bool,
     /// ON なら Window を閉じても常駐する（§8）。Tray 非対応環境では無効化。
     pub keep_running_in_background: bool,
@@ -72,6 +74,7 @@ impl Default for Settings {
             web_base: "https://task.koyori.app".into(),
             appearance: Appearance::System,
             language: i18n::Language::Ja,
+            timezone: None,
             launch_at_login: false,
             keep_running_in_background: true,
             notifications: NotificationPrefs::default(),

@@ -23,6 +23,7 @@ fn main() {
             let settings = settings_store.load();
             // 画面・Tray・OS 通知の文言は起動時の言語で組み立てる。
             i18n::set_language(settings.language);
+            core::timezone::set(settings.timezone.as_deref());
             theme::apply(settings.appearance, None, cx);
 
             // §20/§22 キーバインド（settings.keybindings で上書き可）。

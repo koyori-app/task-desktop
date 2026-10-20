@@ -155,7 +155,8 @@ impl ListDelegate for PullRequestRows {
                                             .as_deref()
                                             .unwrap_or(t!("reviews.list.unknown_author")),
                                         rounds = pr.rounds,
-                                        time = pr.last_reviewed_at.format("%Y-%m-%d %H:%M")
+                                        time = core::timezone::local(&pr.last_reviewed_at)
+                                            .format("%Y-%m-%d %H:%M")
                                     )),
                             )
                             .when(pr.blocking > 0, |d| {

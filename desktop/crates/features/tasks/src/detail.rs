@@ -20,7 +20,7 @@ use api::types::{
     TaskRelationsResponse, TimeLogResponse, TimeLogSummaryResponse, TimerStatusResponse,
     UpdateTaskRequest, UserSummary, WatcherUser,
 };
-use chrono::{Local, NaiveDate};
+use chrono::NaiveDate;
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::calendar::Date;
@@ -1033,7 +1033,7 @@ impl TaskDetailView {
 
     /// 期限（soft）/ ハード期限（hard）。`None` は外す。
     fn apply_due(&mut self, date: Option<NaiveDate>, hard: bool, cx: &mut Context<Self>) {
-        let due = date.and_then(|d| due_timestamp(d, &Local));
+        let due = date.and_then(|d| due_timestamp(d, &core::timezone::current()));
         let current = self.detail.as_ref().and_then(|d| {
             if hard {
                 d.hard_deadline
@@ -1041,7 +1041,7 @@ impl TaskDetailView {
                 d.soft_deadline
             }
         });
-        if current.map(|c| c.with_timezone(&Local).date_naive()) == date {
+        if current.map(|c| c.with_timezone(&core::timezone::current()).date_naive()) == date {
             return;
         }
         let req = match (due, hard) {
@@ -1535,7 +1535,7 @@ impl TaskDetailView {
         let note = self.log_note_input.read(cx).value().trim().to_string();
         let logged_at = match self.log_date_picker.read(cx).date() {
             Date::Single(Some(date)) => date,
-            _ => Local::now().date_naive(),
+            _ => core::timezone::today(),
         };
         let req = CreateTimeLogRequest {
             logged_at,

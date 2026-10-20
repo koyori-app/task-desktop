@@ -621,7 +621,9 @@ fn gate_label(summary: &ReviewSummary) -> String {
             "reviews.gate.ready",
             time = summary
                 .pr_head_checked_at
-                .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+                .map(|d| core::timezone::local(&d)
+                    .format("%Y-%m-%d %H:%M")
+                    .to_string())
                 .unwrap_or_else(|| t!("reviews.detail.unknown").into())
         ),
         None => t!("reviews.gate.unavailable").into(),
@@ -878,9 +880,13 @@ impl Render for ReviewDetailView {
                                             Some(color),
                                         ))
                                         .child(div().flex_1())
-                                        .child(div().text_xs().text_color(c.text_muted).child(
-                                            change.created_at.format("%Y-%m-%d %H:%M").to_string(),
-                                        )),
+                                        .child(
+                                            div().text_xs().text_color(c.text_muted).child(
+                                                core::timezone::local(&change.created_at)
+                                                    .format("%Y-%m-%d %H:%M")
+                                                    .to_string(),
+                                            ),
+                                        ),
                                 )
                                 .when_some(change.note.clone(), |d, note| {
                                     d.child(
@@ -984,12 +990,16 @@ impl Render for ReviewDetailView {
                                 // マージ可能の見出しには確認日時が入っているので重ねない。
                                 .when(!matches!(s.gate, Some(Gate::Ready)), |d| {
                                     d.child(div().text_xs().text_color(c.text_muted).child(t!(
-                                        "reviews.detail.checked",
-                                        time = s
-                                            .pr_head_checked_at
-                                            .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
-                                            .unwrap_or_else(|| t!("reviews.detail.unknown").into())
-                                    )))
+                                            "reviews.detail.checked",
+                                            time = s
+                                                .pr_head_checked_at
+                                                .map(|d| core::timezone::local(&d)
+                                                    .format("%Y-%m-%d %H:%M")
+                                                    .to_string())
+                                                .unwrap_or_else(
+                                                    || t!("reviews.detail.unknown").into()
+                                                )
+                                        )))
                                 }),
                         )
                     })
@@ -1025,7 +1035,8 @@ impl Render for ReviewDetailView {
                                                     ""
                                                 },
                                                 count = r.finding_count,
-                                                time = r.created_at.format("%Y-%m-%d %H:%M")
+                                                time = core::timezone::local(&r.created_at)
+                                                    .format("%Y-%m-%d %H:%M")
                                             ))
                                             .when(one, |d| {
                                                 d.child(

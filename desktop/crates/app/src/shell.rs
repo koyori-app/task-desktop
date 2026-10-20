@@ -242,6 +242,11 @@ impl AppShell {
                         // 文言は render のたびに引くので、全ウィンドウを描き直せば切り替わる。
                         cx.refresh_windows();
                     }
+                    if this.settings.timezone != settings.timezone {
+                        this.settings.timezone = settings.timezone.clone();
+                        core::timezone::set(settings.timezone.as_deref());
+                        cx.refresh_windows();
+                    }
                     this.settings.launch_at_login = settings.launch_at_login;
                     this.settings.keep_running_in_background = settings.keep_running_in_background;
                     this.settings.notifications = settings.notifications.clone();

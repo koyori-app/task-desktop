@@ -12,7 +12,7 @@ use api::types::{
     UpdateTaskRequest, UserSummary,
 };
 use api::{Client, MyTasksQuery, TasksQuery};
-use chrono::{Local, NaiveDate};
+use chrono::NaiveDate;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::calendar::{Calendar, CalendarEvent, CalendarState, Date};
@@ -246,7 +246,10 @@ fn due_bucket(row: &TaskRow, today: NaiveDate) -> usize {
     if row.is_done {
         return 4;
     }
-    match row.due.map(|d| d.with_timezone(&Local).date_naive()) {
+    match row
+        .due
+        .map(|d| d.with_timezone(&core::timezone::current()).date_naive())
+    {
         Some(d) if d < today => 0,
         Some(d) if d == today => 1,
         Some(_) => 2,
@@ -1093,7 +1096,7 @@ impl TaskListView {
     }
 
     fn set_row_due(&mut self, id: Uuid, date: Option<NaiveDate>, cx: &mut Context<Self>) {
-        let due = date.and_then(|d| due_timestamp(d, &Local));
+        let due = date.and_then(|d| due_timestamp(d, &core::timezone::current()));
         let req = match due {
             Some(due) => UpdateTaskRequest {
                 soft_deadline: Some(due),
@@ -1177,7 +1180,9 @@ impl TaskListView {
     fn set_due_editing(&mut self, id: Option<Uuid>, window: &mut Window, cx: &mut Context<Self>) {
         self.due_editing = id;
         if let Some(row) = id.and_then(|id| self.rows.get(&id)) {
-            let date = row.due.map(|d| d.with_timezone(&Local).date_naive());
+            let date = row
+                .due
+                .map(|d| d.with_timezone(&core::timezone::current()).date_naive());
             self.calendar
                 .update(cx, |c, cx| c.set_date(Date::Single(date), window, cx));
         }
@@ -1344,7 +1349,7 @@ impl TaskListView {
                 .collect();
         }
         // My Tasks はプロジェクトをまたぐので期限で分ける（旧 Today / Upcoming を統合）。
-        let today = Local::now().date_naive();
+        let today = core::timezone::today();
         let mut buckets: [Vec<Uuid>; DUE_BUCKETS.len()] = Default::default();
         let needle = self.search_query.to_lowercase();
         for id in &self.order {
@@ -3269,7 +3274,7 @@ mod tests {
     use super::{Sort, SortColumn, changed_range, due_bucket};
     use crate::model::TaskRow;
     use api::types::TaskPriority;
-    use chrono::{Local, TimeZone, Utc};
+    use chrono::{TimeZone, Utc};
 
     fn row(title: &str, priority: TaskPriority, due_day: Option<u32>) -> TaskRow {
         TaskRow {
@@ -3307,10 +3312,10 @@ mod tests {
 
     #[test]
     fn my_tasks_groups_by_due_date() {
-        let today = Local::now().date_naive();
+        let today = core::timezone::today();
         let at = |days: i64| {
             let date = today + chrono::Duration::days(days);
-            Local
+            core::timezone::current()
                 .from_local_datetime(&date.and_hms_opt(12, 0, 0).unwrap())
                 .unwrap()
                 .with_timezone(&Utc)

@@ -12,6 +12,10 @@
 
 "general.language" = { ja = "言語", en = "Language" }
 "general.language_desc" = { ja = "画面の表示言語。入力欄の案内文・トレイ・OS 通知は再起動後に切り替わります。", en = "Display language. Input hints, the tray and OS notifications switch after a restart." }
+"general.timezone" = { ja = "タイムゾーン", en = "Time zone" }
+"general.timezone_desc" = { ja = "日時の表示に使うタイムゾーン。期限の「今日」の判定にも使います。", en = "Time zone for displayed dates and times, including which day counts as today." }
+"general.timezone_system" = { ja = "OS に合わせる（{zone}）", en = "Follow the OS ({zone})" }
+"general.timezone_search" = { ja = "地域名で検索", en = "Search by region" }
 "general.launch" = { ja = "ログイン時に起動", en = "Launch at login" }
 "general.launch_desc" = { ja = "コンピューターにサインインしたときに Koyori を自動で起動します。", en = "Start Koyori automatically when you sign in to your computer." }
 "general.background" = { ja = "バックグラウンドで実行し続ける", en = "Keep running in background" }

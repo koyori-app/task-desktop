@@ -673,7 +673,7 @@ fn relative_time(dt: &DateTime<Utc>) -> String {
     } else if secs < 7 * 86400 {
         t!("notifications.time.days_ago", n = secs / 86400)
     } else {
-        dt.format("%Y-%m-%d").to_string()
+        core::timezone::local(dt).format("%Y-%m-%d").to_string()
     }
 }
 

@@ -8,6 +8,7 @@ i18n = { path = "../../i18n" }
 gpui-kit.workspace = true
 ui = { path = "../../ui" }
 api = { path = "../../api" }
+core = { path = "../../core" }
 platform = { path = "../../platform" }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }

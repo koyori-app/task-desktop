@@ -5,6 +5,7 @@ mod error;
 pub mod notify_text;
 pub mod settings;
 pub mod sync;
+pub mod timezone;
 
 pub use error::{Error, Result};
 pub use settings::{Appearance, NotificationPrefs, Settings, SettingsStore};

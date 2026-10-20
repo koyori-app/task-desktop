@@ -1,7 +1,7 @@
 //! 一覧行の正規化モデル。MyTaskItem / TaskResponse の両方から作る。
 
 use api::types::{CreateTaskRequest, LabelResponse, MyTaskItem, TaskPriority, TaskResponse};
-use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use gpui_kit::Hsla;
 use i18n::t;
 use uuid::Uuid;
@@ -133,11 +133,11 @@ pub fn parse_hex_color(s: &str) -> Option<gpui_kit::Hsla> {
 /// 期限の表記（Web の `formatDeadline` と同じ規則）:
 /// 今日 / N日超過 / N日後（7 日以内）/ それより先は月日。
 pub fn due_label(due: &DateTime<Utc>) -> String {
-    due_label_on(due, Local::now().date_naive())
+    due_label_on(due, core::timezone::today())
 }
 
 fn due_label_on(due: &DateTime<Utc>, today: NaiveDate) -> String {
-    let d = due.with_timezone(&Local).date_naive();
+    let d = due.with_timezone(&core::timezone::current()).date_naive();
     match (d - today).num_days() {
         0 => t!("tasks.due.today").into(),
         n if n < 0 => t!("tasks.due.overdue", days = -n),
@@ -148,7 +148,7 @@ fn due_label_on(due: &DateTime<Utc>, today: NaiveDate) -> String {
 
 /// 期限切れか（今日の期限はまだ切れていない扱い）。
 pub fn is_overdue(due: &DateTime<Utc>) -> bool {
-    due.with_timezone(&Local).date_naive() < Local::now().date_naive()
+    due.with_timezone(&core::timezone::current()).date_naive() < core::timezone::today()
 }
 
 /// API の enum 名（`CriticalFire` 等）をそのまま出さない表示名。
@@ -355,9 +355,9 @@ mod tests {
 
     #[test]
     fn due_label_matches_web_rules() {
-        let today = Local::now().date_naive();
+        let today = core::timezone::today();
         let at = |days: i64| {
-            Local
+            core::timezone::current()
                 .from_local_datetime(
                     &(today + chrono::Duration::days(days))
                         .and_hms_opt(12, 0, 0)
@@ -384,7 +384,7 @@ mod tests {
         assert_eq!(
             due_label_on(&later, today),
             later
-                .with_timezone(&Local)
+                .with_timezone(&core::timezone::current())
                 .format(t!("tasks.due.month_day"))
                 .to_string()
         );

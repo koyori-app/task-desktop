@@ -1,6 +1,6 @@
 //! Detail ペインの描画。ヘッダー・プロパティ・説明と、下段のタブ。
 
-use chrono::{DateTime, Days, Local, Utc};
+use chrono::{DateTime, Days, Utc};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::calendar::Date;
@@ -35,7 +35,7 @@ fn colors(cx: &App) -> Colors {
 }
 
 fn local_time(at: &DateTime<Utc>) -> String {
-    at.with_timezone(&Local)
+    at.with_timezone(&core::timezone::current())
         .format("%Y-%m-%d %H:%M")
         .to_string()
 }
@@ -65,7 +65,7 @@ fn empty_note(c: Colors, text: impl Into<SharedString>) -> Div {
 
 /// 期限のよく使う候補（今日 / 明日 / 1 週間後）。
 fn due_presets() -> Vec<DateRangePreset> {
-    let today = Local::now().date_naive();
+    let today = core::timezone::today();
     [
         (t!("tasks.detail.due_today"), 0),
         (t!("tasks.detail.due_tomorrow"), 1),
@@ -188,7 +188,7 @@ impl TaskDetailView {
                 .update(cx, |s, cx| s.set_value("", window, cx));
         }
         if std::mem::take(&mut self.clear_log_inputs) {
-            let today = Local::now().date_naive();
+            let today = core::timezone::today();
             self.log_minutes_input
                 .update(cx, |s, cx| s.set_value("", window, cx));
             self.log_note_input
@@ -208,7 +208,7 @@ impl TaskDetailView {
             (&self.due_picker, detail.soft_deadline),
             (&self.hard_due_picker, detail.hard_deadline),
         ] {
-            let date = value.map(|d| d.with_timezone(&Local).date_naive());
+            let date = value.map(|d| d.with_timezone(&core::timezone::current()).date_naive());
             if picker.read(cx).date() != Date::Single(date) {
                 picker.update(cx, |s, cx| s.set_date(Date::Single(date), window, cx));
             }
@@ -1915,7 +1915,9 @@ impl TaskDetailView {
                 t!(
                     "tasks.detail.timer_elapsed",
                     time = format_minutes(minutes),
-                    since = start.with_timezone(&Local).format("%H:%M")
+                    since = start
+                        .with_timezone(&core::timezone::current())
+                        .format("%H:%M")
                 )
             }
         });

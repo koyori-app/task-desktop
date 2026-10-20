@@ -2,7 +2,7 @@
 
 use api::types::{DashboardResponse, DashboardTask};
 use api::{Client, DashboardQuery};
-use chrono::{Local, NaiveDate, Utc};
+use chrono::{NaiveDate, Utc};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::notification::Notification;
@@ -123,7 +123,7 @@ impl HomeView {
         self.error = None;
         let query = DashboardQuery {
             filter: Some(self.filter.api().into()),
-            timezone: local_timezone(),
+            timezone: Some(core::timezone::current().name().to_string()),
             limit: Some(PAGE),
             offset: Some(offset),
         };
@@ -230,7 +230,7 @@ impl HomeView {
                 )],
             );
         }
-        let today = Local::now().date_naive();
+        let today = core::timezone::today();
         let rows = self
             .tasks
             .iter()
@@ -239,7 +239,7 @@ impl HomeView {
                 let task = &item.task;
                 let (project, id) = (task.project.id, task.id);
                 let due = task.soft_deadline.or(task.hard_deadline);
-                let due_day = due.map(|d| d.with_timezone(&Local).date_naive());
+                let due_day = due.map(|d| d.with_timezone(&core::timezone::current()).date_naive());
                 let overdue = due_day.is_some_and(|d| d < today);
                 div()
                     .id(("home-task", ix))
@@ -559,40 +559,4 @@ fn day_label(date: Option<&str>) -> String {
     date.and_then(|d| NaiveDate::parse_from_str(d.get(..10)?, "%Y-%m-%d").ok())
         .map(|d| d.format("%m/%d").to_string())
         .unwrap_or_default()
-}
-
-/// OS のタイムゾーン名（IANA）。`TZ` か `/etc/localtime` のリンク先から取る。
-/// 取れなければ None（backend は UTC で数える）。
-fn local_timezone() -> Option<String> {
-    if let Ok(tz) = std::env::var("TZ")
-        && !tz.is_empty()
-        && !tz.starts_with(':')
-    {
-        return Some(tz);
-    }
-    let target = std::fs::read_link("/etc/localtime").ok()?;
-    zone_from_path(&target.to_string_lossy())
-}
-
-fn zone_from_path(path: &str) -> Option<String> {
-    let (_, zone) = path.split_once("zoneinfo/")?;
-    (!zone.is_empty()).then(|| zone.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::zone_from_path;
-
-    #[test]
-    fn zone_is_taken_after_zoneinfo() {
-        assert_eq!(
-            zone_from_path("/var/db/timezone/zoneinfo/Asia/Tokyo").as_deref(),
-            Some("Asia/Tokyo")
-        );
-        assert_eq!(
-            zone_from_path("/usr/share/zoneinfo/America/New_York").as_deref(),
-            Some("America/New_York")
-        );
-        assert!(zone_from_path("/etc/foo").is_none());
-    }
 }

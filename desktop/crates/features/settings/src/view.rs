@@ -7,6 +7,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{Disableable, Icon, Selectable, Sizable};
 use gpui_kit::prelude::FluentBuilder;
@@ -56,6 +57,7 @@ pub struct SettingsView {
     profile_error: Option<SharedString>,
     palette_key: Entity<InputState>,
     search_key: Entity<InputState>,
+    timezone_select: Entity<SelectState<SearchableVec<SharedString>>>,
     notice: Option<SharedString>,
     device_generation: u64,
     devices_loading: bool,
@@ -105,6 +107,46 @@ impl SettingsView {
             settings.launch_at_login = enabled;
         }
 
+        // 先頭は「OS に合わせる」。IANA 名として読めない値は None（OS）に落とす。
+        let zones: Vec<SharedString> = std::iter::once(SharedString::from(t!(
+            "settings.general.timezone_system",
+            zone = core::timezone::system().name()
+        )))
+        .chain(
+            core::timezone::TZ_VARIANTS
+                .iter()
+                .map(|z| SharedString::from(z.name())),
+        )
+        .collect();
+        let selected = settings
+            .timezone
+            .as_deref()
+            .and_then(|name| zones.iter().position(|z| z.as_ref() == name))
+            .unwrap_or(0);
+        let timezone_select = cx.new(|cx| {
+            SelectState::new(
+                SearchableVec::new(zones),
+                Some(gpui_kit::component::IndexPath::new(selected)),
+                window,
+                cx,
+            )
+            .searchable(true)
+        });
+        cx.subscribe(
+            &timezone_select,
+            |this, _, ev: &SelectEvent<SearchableVec<SharedString>>, cx| {
+                let SelectEvent::Confirm(value) = ev;
+                let zone = value
+                    .as_ref()
+                    .map(|v| v.to_string())
+                    .filter(|v| v.parse::<core::timezone::Tz>().is_ok());
+                if this.settings.timezone != zone {
+                    this.mutate(|s| s.timezone = zone, cx);
+                }
+            },
+        )
+        .detach();
+
         let this = Self {
             store,
             settings,
@@ -116,6 +158,7 @@ impl SettingsView {
             profile_error: None,
             palette_key,
             search_key,
+            timezone_select,
             notice: None,
             device_generation: 0,
             devices_loading: client.is_some(),
@@ -416,6 +459,17 @@ impl SettingsView {
                 ),
                 row(
                     c,
+                    t!("settings.general.timezone"),
+                    Some(t!("settings.general.timezone_desc")),
+                    Select::new(&self.timezone_select)
+                        .small()
+                        .menu_width(px(360.))
+                        .menu_max_h(px(320.))
+                        .search_placeholder(t!("settings.general.timezone_search"))
+                        .into_any_element(),
+                ),
+                row(
+                    c,
                     t!("settings.general.launch"),
                     Some(t!("settings.general.launch_desc")),
                     launch,
@@ -690,7 +744,11 @@ impl SettingsView {
                 let id = d.id;
                 let last = d
                     .last_used_at
-                    .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                    .map(|t| {
+                        core::timezone::local(&t)
+                            .format("%Y-%m-%d %H:%M")
+                            .to_string()
+                    })
                     .unwrap_or_else(|| "—".into());
                 let weak = cx.entity().downgrade();
                 let title = if own {
@@ -704,7 +762,7 @@ impl SettingsView {
                     Some(t!(
                         "settings.account.device_meta",
                         last = last,
-                        expires = d.expires_at.format("%Y-%m-%d")
+                        expires = core::timezone::local(&d.expires_at).format("%Y-%m-%d")
                     )),
                     Button::new(SharedString::from(format!("revoke-{id}")))
                         .outline()

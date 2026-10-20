@@ -177,7 +177,7 @@ pub fn relative_time(
     } else if minutes < 60 * 24 {
         t!("projects.time.hours", n = minutes / 60)
     } else {
-        at.with_timezone(&chrono::Local)
+        at.with_timezone(&core::timezone::current())
             .format("%Y-%m-%d")
             .to_string()
     }
