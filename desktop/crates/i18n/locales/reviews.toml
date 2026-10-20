@@ -75,12 +75,14 @@
 
 # 指摘の状態
 "state.open" = { ja = "未対応", en = "Open" }
+"state.fixing" = { ja = "修正中", en = "Fixing" }
 "state.fixed" = { ja = "修正済み", en = "Fixed" }
 "state.verified" = { ja = "確認済み", en = "Verified" }
 "state.deferred" = { ja = "保留", en = "Deferred" }
 "state.rejected" = { ja = "却下", en = "Rejected" }
 
 # 指摘への操作
+"action.fixing" = { ja = "修正中にする", en = "Mark as Fixing" }
 "action.fixed" = { ja = "修正済みにする", en = "Mark as Fixed" }
 "action.verify" = { ja = "確認済みにする", en = "Verify" }
 "action.reopen" = { ja = "再オープン", en = "Reopen" }

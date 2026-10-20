@@ -149,8 +149,9 @@ const SEVERITIES: [FindingSeverity; 4] = [
     FindingSeverity::Low,
     FindingSeverity::Nit,
 ];
-const STATES: [FindingState; 5] = [
+const STATES: [FindingState; 6] = [
     FindingState::Open,
+    FindingState::Fixing,
     FindingState::Fixed,
     FindingState::Deferred,
     FindingState::Rejected,
@@ -580,6 +581,7 @@ pub(crate) fn severity_label(severity: FindingSeverity) -> &'static str {
 fn state_label(state: FindingState) -> &'static str {
     match state {
         FindingState::Open => t!("reviews.state.open"),
+        FindingState::Fixing => t!("reviews.state.fixing"),
         FindingState::Fixed => t!("reviews.state.fixed"),
         FindingState::Verified => t!("reviews.state.verified"),
         FindingState::Deferred => t!("reviews.state.deferred"),
@@ -589,6 +591,7 @@ fn state_label(state: FindingState) -> &'static str {
 
 fn action_label(state: FindingState) -> &'static str {
     match state {
+        FindingState::Fixing => t!("reviews.action.fixing"),
         FindingState::Fixed => t!("reviews.action.fixed"),
         FindingState::Verified => t!("reviews.action.verify"),
         FindingState::Open => t!("reviews.action.reopen"),
@@ -808,7 +811,7 @@ impl Render for ReviewDetailView {
                 ));
             // 状態の変化は時系列の縦線に並べ、「誰が・何から何へ・いつ」を 1 行目で読めるようにする。
             let state_color = |state: FindingState| match state {
-                FindingState::Open => c.warning,
+                FindingState::Open | FindingState::Fixing => c.warning,
                 FindingState::Fixed | FindingState::Verified => c.success,
                 FindingState::Rejected => c.danger,
                 FindingState::Deferred => c.text_muted,

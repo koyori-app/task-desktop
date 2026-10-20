@@ -34,6 +34,7 @@
 "palette.search_tasks" = { ja = "タスクを検索", en = "Search Tasks" }
 "palette.toggle_sidebar" = { ja = "サイドバーの表示切り替え", en = "Toggle Sidebar" }
 "palette.start_review" = { ja = "レビューを開始", en = "Start Review" }
+"palette.finding_fixing" = { ja = "指摘を修正中にする", en = "Mark Finding as Fixing" }
 "palette.finding_fixed" = { ja = "指摘を修正済みにする", en = "Mark Finding as Fixed" }
 "palette.finding_verified" = { ja = "指摘を確認済みにする", en = "Verify Finding" }
 "palette.finding_open" = { ja = "指摘を再オープン", en = "Reopen Finding" }

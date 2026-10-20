@@ -2102,6 +2102,7 @@
       "get": {
         "tags": ["Auth"],
         "summary": "ログイン中ユーザー情報",
+        "description": "セッションと Device Token で呼べる（Desktop のアカウント表示）。PAT は 403。",
         "operationId": "me",
         "responses": {
           "200": {
@@ -4016,6 +4017,174 @@
           },
           "400": {
             "description": "認証用リンクが無効か、または有効期限切れです",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/desktop/auth/codes": {
+      "post": {
+        "tags": ["Desktop"],
+        "summary": "Desktop 用の認可コードを発行",
+        "description": "Web の承認画面から呼ぶ。セッション専用（Bearer・2FA 途中のセッションは 403）。コードは 5 分・一度きり。",
+        "operationId": "create_desktop_auth_code",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DesktopAuthCodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "認可コード",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DesktopAuthCodeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/desktop/auth/token": {
+      "post": {
+        "tags": ["Desktop"],
+        "summary": "認可コードを Device Token に交換",
+        "description": "未認証で呼ぶ（code が資格）。code の不一致・期限切れ・再利用・code_verifier の不一致はすべて 401 で、code は消費済みになる。平文トークンはこの応答でのみ返す。",
+        "operationId": "exchange_desktop_auth_token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DesktopAuthTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "発行した Device Token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DesktopAuthTokenResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "認可コードが無効・期限切れ・使用済み、または code_verifier が一致しません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "試行が多すぎます。時間をおいて再度お試しください",
             "content": {
               "application/json": {
                 "schema": {
@@ -19392,6 +19561,760 @@
         }
       }
     },
+    "/v1/tenants/{tenant_id}/projects/{project_id}/webhooks": {
+      "get": {
+        "tags": ["Webhooks"],
+        "summary": "Webhook 一覧（secret は返さない）",
+        "operationId": "list_webhooks",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "テナントID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "プロジェクトID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Webhook 一覧",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WebhookResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "リソースが見つかりません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Webhooks"],
+        "summary": "Webhook を作成（secret はこの応答でだけ平文で返す）",
+        "operationId": "create_webhook",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "テナントID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "プロジェクトID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWebhookRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "作成した Webhook",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateWebhookResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "リソースが見つかりません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant_id}/projects/{project_id}/webhooks/{id}": {
+      "put": {
+        "tags": ["Webhooks"],
+        "summary": "Webhook を更新（有効 / 無効の切り替えも `is_active` で行う）",
+        "operationId": "update_webhook",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "テナントID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "プロジェクトID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Webhook ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWebhookRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "更新後の Webhook",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "リソースが見つかりません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Webhooks"],
+        "summary": "Webhook を削除（配信履歴も消える）",
+        "operationId": "delete_webhook",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "テナントID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "プロジェクトID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Webhook ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "削除しました"
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "リソースが見つかりません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant_id}/projects/{project_id}/webhooks/{id}/deliveries": {
+      "get": {
+        "tags": ["Webhooks"],
+        "summary": "配信履歴（新しい順）",
+        "operationId": "list_webhook_deliveries",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "テナントID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "プロジェクトID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Webhook ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "返す件数（1〜100、既定 50）。新しい順",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "配信履歴",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WebhookDeliveryResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "リソースが見つかりません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant_id}/projects/{project_id}/webhooks/{id}/deliveries/{delivery_id}/redeliver": {
+      "post": {
+        "tags": ["Webhooks"],
+        "summary": "配信を手動で再送（同じ payload で新しい配信を作る。元の行は変えない）",
+        "operationId": "redeliver_webhook_delivery",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "テナントID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "プロジェクトID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Webhook ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "delivery_id",
+            "in": "path",
+            "description": "配信ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "新しく積んだ配信",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDeliveryResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "リソースが見つかりません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tenants/{tenant_id}/require-2fa": {
       "post": {
         "tags": ["Tenants"],
@@ -19885,6 +20808,180 @@
         }
       }
     },
+    "/v1/users/me/devices": {
+      "get": {
+        "tags": ["Desktop"],
+        "summary": "自分の端末（Device Token）の一覧",
+        "description": "失効済み・期限切れを除く。セッションと Device Token で呼べる。",
+        "operationId": "list_devices",
+        "responses": {
+          "200": {
+            "description": "端末の一覧（新しい順）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DeviceToken"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/users/me/devices/{id}": {
+      "delete": {
+        "tags": ["Desktop"],
+        "summary": "端末を失効",
+        "description": "revoked_at を立てる（行は残す）。Device Token からは自身のみ失効できる（ログアウト）。セッションからは自分の他の端末も失効できる。他人の端末は 404。",
+        "operationId": "revoke_device",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "端末の識別子",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "失効しました"
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "リソースが見つかりません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/users/me/notification-settings/{project_id}": {
       "get": {
         "tags": ["Notifications"],
@@ -20067,6 +21164,57 @@
       "get": {
         "tags": ["Notifications"],
         "operationId": "list_notifications",
+        "parameters": [
+          {
+            "name": "unread",
+            "in": "query",
+            "description": "未読のみ",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "`task` / `review`",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "種別の分類。既知のレビュー通知種別に含まれるかで分ける。",
+              "enum": ["task", "review"]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "既定 50、上限 100",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "このカーソルより古い行（通常のページ送り）。前のページの `next_cursor` を渡す",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "このカーソルより新しい行（catch-up）。最後に受け取った行の `cursor`、\nまたは前の `after` 呼び出しの `next_cursor` を渡す。`cursor` と同時指定は 400",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -21273,6 +22421,48 @@
           }
         }
       },
+      "CreateWebhookRequest": {
+        "type": "object",
+        "required": ["url", "secret", "events"],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "購読するイベント（1 つ以上）"
+          },
+          "format": {
+            "type": ["string", "null"],
+            "description": "`json`（既定）| `discord`"
+          },
+          "secret": {
+            "type": "string",
+            "description": "署名用のシークレット（16 文字以上）"
+          },
+          "url": {
+            "type": "string",
+            "description": "送信先。https 必須。private / loopback 宛ては 400（loopback は開発設定時のみ許可）"
+          }
+        }
+      },
+      "CreateWebhookResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WebhookResponse"
+          },
+          {
+            "type": "object",
+            "required": ["secret"],
+            "properties": {
+              "secret": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "作成時の応答。secret を平文で返すのはこのときだけ。"
+      },
       "CustomFieldDefinitionSummary": {
         "type": "object",
         "required": ["id", "name", "field_type", "is_required", "position"],
@@ -21450,6 +22640,92 @@
           },
           "task": {
             "$ref": "#/components/schemas/MyTaskItem"
+          }
+        }
+      },
+      "DesktopAuthCodeRequest": {
+        "type": "object",
+        "description": "Desktop に渡す認可コードの発行要求（Web の承認画面から送る）。",
+        "required": ["code_challenge", "name"],
+        "properties": {
+          "code_challenge": {
+            "type": "string",
+            "description": "S256 の code_challenge（base64url、43〜128 文字）"
+          },
+          "name": {
+            "type": "string",
+            "description": "端末名（クライアントの申告。表示用）"
+          }
+        }
+      },
+      "DesktopAuthCodeResponse": {
+        "type": "object",
+        "required": ["code"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "認可コード（5 分・一度きり）"
+          }
+        }
+      },
+      "DesktopAuthTokenRequest": {
+        "type": "object",
+        "description": "認可コードと code_verifier を Device Token に交換する要求（Desktop から送る）。",
+        "required": ["code", "code_verifier"],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "code_verifier": {
+            "type": "string",
+            "description": "RFC 7636 の code_verifier（43〜128 文字）"
+          }
+        }
+      },
+      "DesktopAuthTokenResponse": {
+        "type": "object",
+        "description": "発行した Device Token（平文はこの応答でのみ返す）。",
+        "required": ["token", "expires_at", "device_id"],
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "token": {
+            "type": "string"
+          }
+        }
+      },
+      "DeviceToken": {
+        "type": "object",
+        "description": "端末（Device Token）のメタデータ。平文・ハッシュは含まない。",
+        "required": ["id", "name", "token_last_four", "expires_at", "last_used_at", "created_at"],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_used_at": {
+            "type": ["string", "null"],
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "token_last_four": {
+            "type": "string"
           }
         }
       },
@@ -21640,9 +22916,17 @@
           "state",
           "created_at",
           "updated_at",
-          "transitions"
+          "transitions",
+          "available_actions"
         ],
         "properties": {
+          "available_actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FindingState"
+            },
+            "description": "要求者がいま遷移できる先の状態（`PATCH … {state}` にそのまま渡せる値）。\n`write:review` が無い場合は空。\n\n遷移規則・役割規則（仕様 §3）は backend だけが持つ。クライアントはこれを見て\n操作を出し、規則を写さない。"
+          },
           "body": {
             "type": "string"
           },
@@ -21712,7 +22996,7 @@
       "FindingState": {
         "type": "string",
         "description": "指摘の状態。\n\n遷移規則は `service::reviews::can_transition` を正とする。`Verified` は終端で、\n誤りだったと分かった場合は新しいラウンドで指摘を出し直す。",
-        "enum": ["open", "fixed", "verified", "deferred", "rejected"]
+        "enum": ["open", "fixing", "fixed", "verified", "deferred", "rejected"]
       },
       "FindingTransitionResponse": {
         "type": "object",
@@ -22164,11 +23448,15 @@
       },
       "NotificationItem": {
         "type": "object",
-        "required": ["id", "notification_type", "payload", "created_at"],
+        "required": ["id", "notification_type", "payload", "cursor", "created_at"],
         "properties": {
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "cursor": {
+            "type": "string",
+            "description": "この行を指すカーソル。catch-up では受け取った最新の行のこの値を控え、\n次回 `after` に渡す（`next_cursor` は取り切ると `null` になるので控えに使えない）"
           },
           "id": {
             "type": "string",
@@ -22178,6 +23466,22 @@
             "type": "string"
           },
           "payload": {},
+          "project": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NotificationProjectSummary",
+                "description": "`project_id` から引いた要約。引けなければ `null`"
+              }
+            ]
+          },
+          "project_id": {
+            "type": ["string", "null"],
+            "format": "uuid",
+            "description": "通知が属するプロジェクト。タスクに紐づかない通知（レビュー等）でも入る"
+          },
           "read_at": {
             "type": ["string", "null"],
             "format": "date-time"
@@ -22196,8 +23500,12 @@
       },
       "NotificationListResponse": {
         "type": "object",
-        "required": ["unread_count", "notifications"],
+        "required": ["unread_count", "next_cursor", "notifications"],
         "properties": {
+          "next_cursor": {
+            "type": ["string", "null"],
+            "description": "続きを引く鍵。`null` なら取り切っている。\n\n- `cursor` 指定時・無指定時: ページ内の最も古い行。次の `cursor` に渡す\n- `after` 指定時: ページ内の最も新しい行。次の `after` に渡す"
+          },
           "notifications": {
             "type": "array",
             "items": {
@@ -22207,7 +23515,26 @@
           "unread_count": {
             "type": "integer",
             "format": "int64",
+            "description": "未読の総数。`unread` / `kind` / `cursor` / `after` の指定に関係なく、見える通知全体で数える",
             "minimum": 0
+          }
+        }
+      },
+      "NotificationProjectSummary": {
+        "type": "object",
+        "description": "通知が属するプロジェクトの要約。API パスと画面 URL の組み立てに使う。",
+        "required": ["tenant_id", "id", "key"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -22248,7 +23575,7 @@
       },
       "OAuthConnectionItem": {
         "type": "object",
-        "required": ["provider", "connected_at"],
+        "required": ["provider", "connected_at", "sign_in"],
         "properties": {
           "connected_at": {
             "type": "string"
@@ -22261,6 +23588,14 @@
           },
           "provider_email": {
             "type": ["string", "null"]
+          },
+          "provider_login": {
+            "type": ["string", "null"],
+            "description": "ホスト上のユーザー名（GitHub / GitLab の login。小文字で控えている）。\nレビュー画面が「自分が作成した PR」を PR の作成者と突き合わせて見分けるのに使う"
+          },
+          "sign_in": {
+            "type": "boolean",
+            "description": "ログイン手段に数える連携か。PR 承認用の GitHub（`github_app`）は連携専用なので `false`。\nプロバイダー一覧の `sign_in` と違い、その設定が外れた後の連携でも判定できる"
           }
         }
       },
@@ -22278,7 +23613,7 @@
       },
       "OAuthProviderItem": {
         "type": "object",
-        "required": ["provider", "connection_provider", "requires_instance_url"],
+        "required": ["provider", "connection_provider", "requires_instance_url", "sign_in"],
         "properties": {
           "connection_provider": {
             "type": "string",
@@ -22286,11 +23621,15 @@
           },
           "provider": {
             "type": "string",
-            "description": "プロバイダー slug（github | gitlab | gitlab_selfhosted | google | oidc）"
+            "description": "プロバイダー slug（github | gitlab | gitlab_selfhosted | google | oidc | github_app）"
           },
           "requires_instance_url": {
             "type": "boolean",
             "description": "ログイン開始時に self-hosted インスタンス URL の入力が必要か（gitlab_selfhosted のみ true）"
+          },
+          "sign_in": {
+            "type": "boolean",
+            "description": "サインインに使えるか。`false`（github_app）はログイン中の利用者への連携専用で、\nサインイン画面には出さない"
           }
         }
       },
@@ -22832,6 +24171,11 @@
         ],
         "description": "ラウンドと、そのラウンドで出した指摘。"
       },
+      "ReviewGate": {
+        "type": "string",
+        "description": "PR のマージ判定の表示区分（仕様 §5）。\n\n判定は `service::reviews::review_gate`。`mergeable` と違い、鮮度（レビュー後に\nコミットが積まれたか）まで見る片道降格の結果。",
+        "enum": ["unlinked", "unreviewed", "blocked", "stale_unknown", "outdated", "ready"]
+      },
       "ReviewResponse": {
         "type": "object",
         "required": [
@@ -22905,7 +24249,8 @@
           "counts",
           "blocking",
           "owner_override_rejections",
-          "mergeable"
+          "mergeable",
+          "gate"
         ],
         "properties": {
           "blocking": {
@@ -22924,6 +24269,10 @@
               "$ref": "#/components/schemas/SeverityStateCount"
             },
             "description": "重大度 × 状態の件数"
+          },
+          "gate": {
+            "$ref": "#/components/schemas/ReviewGate",
+            "description": "表示用の判定（上から順に最初に当たったもの）。クライアントは再計算しない\n\n権威のゲートは引き続き CLI の `--head` 照合と branch protection。"
           },
           "latest_head_sha": {
             "type": ["string", "null"],
@@ -23011,12 +24360,14 @@
       "Scope": {
         "type": "string",
         "enum": [
+          "api",
+          "read_api",
+          "read:tenant",
+          "write:tenant",
           "read:project",
           "write:project",
           "read:drive",
           "write:drive",
-          "admin:tenant",
-          "admin:project",
           "read:task",
           "write:task",
           "read:milestone",
@@ -24277,6 +25628,30 @@
           }
         }
       },
+      "UpdateWebhookRequest": {
+        "type": "object",
+        "description": "指定したものだけ変える。`is_active` を true に戻すと `failure_streak` も 0 に戻る。",
+        "properties": {
+          "events": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            }
+          },
+          "format": {
+            "type": ["string", "null"]
+          },
+          "is_active": {
+            "type": ["boolean", "null"]
+          },
+          "secret": {
+            "type": ["string", "null"]
+          },
+          "url": {
+            "type": ["string", "null"]
+          }
+        }
+      },
       "UserResponse": {
         "type": "object",
         "description": "Public user profile — excludes password_hash, sessions_revoked_at, and other secrets.",
@@ -24423,6 +25798,106 @@
             "type": "string"
           }
         }
+      },
+      "WebhookDeliveryResponse": {
+        "type": "object",
+        "required": ["id", "webhook_id", "event", "payload", "attempt", "created_at"],
+        "properties": {
+          "attempt": {
+            "type": "integer",
+            "format": "int32",
+            "description": "試行した回数（最大 5）"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "delivered_at": {
+            "type": ["string", "null"],
+            "format": "date-time"
+          },
+          "event": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_error": {
+            "type": ["string", "null"]
+          },
+          "next_attempt_at": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "次に試す時刻。null なら完了（成功または打ち止め）"
+          },
+          "payload": {
+            "type": "object"
+          },
+          "status_code": {
+            "type": ["integer", "null"],
+            "format": "int32"
+          },
+          "webhook_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "WebhookResponse": {
+        "type": "object",
+        "description": "Webhook。secret は返さない（作成時の応答だけ [`CreateWebhookResponse`] で平文を返す）。",
+        "required": [
+          "id",
+          "project_id",
+          "url",
+          "events",
+          "format",
+          "is_active",
+          "failure_streak",
+          "created_by",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "failure_streak": {
+            "type": "integer",
+            "format": "int32",
+            "description": "打ち止めになった配信の連続回数。5 で `is_active` が false になる"
+          },
+          "format": {
+            "type": "string",
+            "description": "`json` | `discord`"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "url": {
+            "type": "string",
+            "description": "一覧では管理者に完全な URL、それ以外には `[redacted]` を返す。"
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -24501,6 +25976,10 @@
     {
       "name": "Notifications",
       "description": "in-app 通知・ウォッチャー・通知設定"
+    },
+    {
+      "name": "Desktop",
+      "description": "Koyori Desktop の認証（Device Token）・端末管理"
     }
   ]
 }

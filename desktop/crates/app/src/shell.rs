@@ -1448,6 +1448,7 @@ impl AppShell {
                     for state in self.review_detail.read(cx).available_actions() {
                         use api::types::FindingState;
                         let label = match state {
+                            FindingState::Fixing => t!("app.palette.finding_fixing"),
                             FindingState::Fixed => t!("app.palette.finding_fixed"),
                             FindingState::Verified => t!("app.palette.finding_verified"),
                             FindingState::Open => t!("app.palette.finding_open"),
