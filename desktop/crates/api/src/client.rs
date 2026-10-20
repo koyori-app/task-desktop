@@ -78,6 +78,20 @@ impl Client {
         std::sync::Arc::ptr_eq(&self.unauthorized, &other.unauthorized)
     }
 
+    /// API が返す相対パス（`/v1/drive/files/{id}/content` 等）を base に繋げた
+    /// 絶対 URL。スキームなしの文字列を OS に渡すと macOS が「アプリケーションを
+    /// 選択」ダイアログを出すので、ブラウザで開く前にこれを通す。
+    pub fn absolute_url(&self, path: &str) -> String {
+        if path.starts_with("http://") || path.starts_with("https://") {
+            return path.to_owned();
+        }
+        format!(
+            "{}/{}",
+            self.base.as_str().trim_end_matches('/'),
+            path.trim_start_matches('/')
+        )
+    }
+
     fn url(&self, segments: &[&str]) -> Result<Url> {
         let mut url = self.base.clone();
         url.path_segments_mut()
@@ -1022,5 +1036,23 @@ impl FindingsQuery {
             ));
         }
         v
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Client;
+
+    #[test]
+    fn absolute_url_keeps_api_base_path() {
+        let c = Client::new("https://task.example/api", "t").unwrap();
+        assert_eq!(
+            c.absolute_url("/v1/drive/files/1/content"),
+            "https://task.example/api/v1/drive/files/1/content"
+        );
+        assert_eq!(
+            c.absolute_url("https://cdn.example/x"),
+            "https://cdn.example/x"
+        );
     }
 }

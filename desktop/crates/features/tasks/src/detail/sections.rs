@@ -2141,7 +2141,11 @@ impl TaskDetailView {
             _ => {}
         }
         for file in &self.attachments {
-            let (id, url, name) = (file.id, file.url.clone(), file.name.clone());
+            let url = self
+                .client
+                .as_ref()
+                .map_or_else(|| file.url.clone(), |c| c.absolute_url(&file.url));
+            let (id, name) = (file.id, file.name.clone());
             list = list.child(
                 div()
                     .id(SharedString::from(format!("file-{id}")))
