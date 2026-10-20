@@ -165,7 +165,8 @@ impl ListDelegate for PullRequestRows {
                                     Some(c.danger),
                                 ))
                             })
-                            .when(pr.unresolved > 0, |d| {
+                            // 承認待ちは未解決にも数えられるので、両方出すと件数が二重に見える。
+                            .when(pr.blocking == 0 && pr.unresolved > 0, |d| {
                                 d.child(::ui::badge(
                                     &c,
                                     t!("reviews.list.unresolved_badge", count = pr.unresolved),
